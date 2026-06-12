@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Publicar — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Publicar conteúdo</h1>
+    <p class="subtitle">Reels, Stories, fotos e carrosséis com legenda completa</p>
+  </div>
+</div>
+
+<div class="grid-publish">
+  <section class="card glass">
+    <form id="publish-form" onsubmit="publishContent(event)">
+      <label class="field-label">Conta<select id="pub-account" required></select></label>
+
+      <label class="field-label">Tipo de publicação
+        <select id="pub-type" onchange="togglePublishFields()">
+          <option value="reel">Reel</option>
+          <option value="story">Story</option>
+          <option value="image">Foto no feed</option>
+          <option value="carousel">Carrossel</option>
+        </select>
+      </label>
+
+      <div id="pub-upload-block">
+        <label class="field-label">Arquivo principal
+          <div class="file-zone" id="pub-file-zone">
+            <input type="file" id="pub-file" accept="video/*,image/jpeg,image/png">
+            <span id="pub-file-label">Arraste ou clique para selecionar</span>
+          </div>
+        </label>
+        <label class="field-label" id="pub-cover-block">Capa do Reel (thumbnail)
+          <div class="file-zone sm" id="pub-cover-zone">
+            <input type="file" id="pub-cover-file" accept="image/jpeg,image/png,image/webp">
+            <span id="pub-cover-label">Opcional — imagem JPEG/PNG</span>
+          </div>
+        </label>
+        <label class="field-label" id="pub-audio-block">Nome do áudio (Reels)
+          <input type="text" id="pub-audio-name" maxlength="100" placeholder="Ex: Minha faixa original">
+          <span class="hint">A música deve estar embutida no vídeo. A API não permite escolher músicas do catálogo do Instagram.</span>
+        </label>
+      </div>
+
+      <label id="pub-carousel-block" class="field-label hidden">URLs do carrossel (uma por linha)
+        <textarea id="pub-carousel-urls" rows="4" placeholder="https://..."></textarea>
+      </label>
+
+      <div class="caption-editor">
+        <div class="caption-header">
+          <label class="field-label no-margin">Legenda</label>
+          <span class="caption-counter"><span id="pub-caption-count">0</span> / 2200</span>
+        </div>
+        <textarea id="pub-caption" class="caption-large" rows="12" maxlength="2200" placeholder="Escreva sua legenda completa aqui — hashtags, menções, call to action..."></textarea>
+        <p class="hint hidden" id="story-caption-hint">Stories não suportam legenda via API da Meta.</p>
+      </div>
+
+      <button type="submit" class="btn primary btn-full">Publicar agora</button>
+    </form>
+  </section>
+
+  <section class="card glass">
+    <h2>Tipos suportados</h2>
+    <div class="info-list">
+      <div class="info-item"><strong>Reel</strong><span>Vídeo com áudio original no arquivo + nome do áudio opcional</span></div>
+      <div class="info-item"><strong>Story</strong><span>Imagem ou vídeo — áudio só se já estiver no arquivo</span></div>
+      <div class="info-item"><strong>Música</strong><span>A API da Meta não permite músicas licenciadas/trending do Instagram. Use vídeo com áudio já editado.</span></div>
+      <div class="info-item"><strong>Foto</strong><span>Imagem JPEG no feed com legenda</span></div>
+      <div class="info-item"><strong>Carrossel</strong><span>2 a 10 itens com legenda única</span></div>
+    </div>
+    <div class="notice notice-info" style="margin-top:20px">
+      Faça upload dos arquivos em <a href="/media">Mídia</a> ou selecione diretamente aqui.
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>initPublishPage();</script>
+{% endblock %}

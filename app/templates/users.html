@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Usuários — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Usuários do painel</h1>
+    <p class="subtitle">Crie logins para cada pessoa que vai acessar o sistema</p>
+  </div>
+</div>
+
+<div class="grid-2">
+  <section class="card glass">
+    <h2>Novo usuário</h2>
+    <form id="user-form" onsubmit="createPanelUser(event)">
+      <label class="field-label">Usuário<input id="new-username" required minlength="3" autocomplete="off"></label>
+      <label class="field-label">Senha<input type="password" id="new-password" required minlength="12" autocomplete="new-password"></label>
+      <p class="hint">Mínimo 12 caracteres. Guarde a senha — ela não é exibida depois.</p>
+      <button type="submit" class="btn primary">Criar usuário</button>
+    </form>
+  </section>
+
+  <section class="card glass">
+    <h2>Usuários cadastrados</h2>
+    <div id="users-list"></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>initUsersPage();</script>
+{% endblock %}

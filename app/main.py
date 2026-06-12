@@ -1,0 +1,650 @@
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.config import APP_BASE_URL, IMAGES_DIR, VIDEOS_DIR
+from app.database import Base, SessionLocal, engine, get_db, migrate_schema
+from app.models import AdminUser
+from app.models import Account, LoopConfig, PostLog
+from app.services.auth import (
+    SESSION_COOKIE,
+    clear_session_cookie,
+    create_user,
+    delete_user,
+    ensure_admin,
+    get_session_user,
+    list_users,
+    login as auth_login,
+    logout as auth_logout,
+    require_owner,
+    set_session_cookie,
+)
+from app.services.health import check_account_health, refresh_account_insights
+from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
+from app.services.loop_worker import start_loop_worker
+from app.services.media_storage import list_media, save_image, save_video
+from app.services.rate_limit import can_post, usage_stats
+from app.services import settings as app_settings
+
+logging.basicConfig(level=logging.INFO)
+
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+PUBLIC_PREFIXES = ("/static", "/media", "/login", "/api/auth/login", "/api/health")
+
+
+def _is_public(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in PUBLIC_PREFIXES)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    migrate_schema()
+    db = SessionLocal()
+    try:
+        ensure_admin(db)
+    finally:
+        db.close()
+    start_loop_worker()
+    yield
+
+
+app = FastAPI(title="Postagem IG Panel", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/media/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="media_videos")
+app.mount("/media/images", StaticFiles(directory=str(IMAGES_DIR)), name="media_images")
+
+
+@app.middleware("http")
+async def security_and_auth(request: Request, call_next):
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "X-XSS-Protection": "1; mode=block",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
+    if os.getenv("ENV", "production") == "production":
+        headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    path = request.url.path
+    if _is_public(path):
+        response = await call_next(request)
+        for k, v in headers.items():
+            response.headers[k] = v
+        return response
+
+    token = request.cookies.get(SESSION_COOKIE)
+    db = SessionLocal()
+    try:
+        user = get_session_user(db, token)
+    finally:
+        db.close()
+
+    if not user:
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Não autenticado"}, status_code=401, headers=headers)
+        return RedirectResponse("/login", status_code=302, headers=headers)
+
+    response = await call_next(request)
+    for k, v in headers.items():
+        response.headers[k] = v
+    return response
+
+
+# --- Schemas ---
+
+class AccountCreate(BaseModel):
+    name: str
+    ig_user_id: str
+    access_token: str
+    username: str = ""
+    proxy_url: str = ""
+    graph_api_version: str = "v21.0"
+    graph_host: str = "graph.facebook.com"
+    max_posts_per_day: int = Field(default=100, ge=1, le=500)
+    max_posts_per_hour: int = Field(default=25, ge=1, le=100)
+    default_caption: str = ""
+    is_active: bool = True
+
+
+class AccountUpdate(BaseModel):
+    name: str | None = None
+    username: str | None = None
+    ig_user_id: str | None = None
+    access_token: str | None = None
+    proxy_url: str | None = None
+    graph_api_version: str | None = None
+    graph_host: str | None = None
+    max_posts_per_day: int | None = Field(default=None, ge=1, le=500)
+    max_posts_per_hour: int | None = Field(default=None, ge=1, le=100)
+    default_caption: str | None = None
+    is_active: bool | None = None
+
+
+class PostImageRequest(BaseModel):
+    account_id: int
+    image_url: str
+    caption: str = ""
+
+
+class PostReelRequest(BaseModel):
+    account_id: int
+    video_url: str
+    caption: str = ""
+    cover_url: str = ""
+    audio_name: str = ""
+
+
+class UserCreateRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class PostCarouselRequest(BaseModel):
+    account_id: int
+    urls: list[str]
+    caption: str = ""
+
+
+class LoopVideoItem(BaseModel):
+    video_url: str
+    cover_url: str = ""
+
+
+class LoopConfigRequest(BaseModel):
+    videos: list[LoopVideoItem]
+    caption: str = ""
+    batch_size: int = Field(default=4, ge=1, le=50)
+    interval_seconds: int = Field(default=60, ge=0, le=3600)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class PostStoryRequest(BaseModel):
+    account_id: int
+    image_url: str = ""
+    video_url: str = ""
+
+
+class AppSettingsUpdate(BaseModel):
+    max_accounts: int = Field(ge=1, le=1000)
+    default_max_posts_per_day: int = Field(ge=1, le=500)
+    default_max_posts_per_hour: int = Field(ge=1, le=100)
+    default_loop_batch_size: int = Field(ge=1, le=50)
+    default_loop_interval_seconds: int = Field(ge=0, le=3600)
+
+
+# --- Helpers ---
+
+def _account_dict(account: Account, db: Session) -> dict:
+    stats = usage_stats(db, account.id, account.max_posts_per_day, account.max_posts_per_hour)
+    loop = account.loop_config
+    return {
+        "id": account.id,
+        "name": account.name,
+        "username": account.username,
+        "ig_user_id": account.ig_user_id,
+        "proxy_url": account.proxy_url,
+        "max_posts_per_day": account.max_posts_per_day,
+        "max_posts_per_hour": account.max_posts_per_hour,
+        "default_caption": account.default_caption,
+        "is_active": account.is_active,
+        "health_status": account.health_status,
+        "health_message": account.health_message,
+        "profile_views": account.profile_views,
+        "total_reach": account.total_reach,
+        "total_impressions": account.total_impressions,
+        "usage": stats,
+        "loop_running": bool(loop and loop.is_running),
+        "loop_posts": loop.total_posts if loop else 0,
+        "loop_batches": loop.batches_completed if loop else 0,
+    }
+
+
+def _get_account_or_404(db: Session, account_id: int) -> Account:
+    account = db.get(Account, account_id)
+    if not account:
+        raise HTTPException(404, "Conta não encontrada")
+    return account
+
+
+def _current_user(request: Request, db: Session = Depends(get_db)) -> AdminUser:
+    user = get_session_user(db, request.cookies.get(SESSION_COOKIE))
+    if not user:
+        raise HTTPException(401, "Não autenticado")
+    return user
+
+
+def _enforce_post_limits(db: Session, account: Account) -> None:
+    allowed, reason = can_post(db, account.id, account.max_posts_per_day, account.max_posts_per_hour)
+    if not allowed:
+        raise HTTPException(429, reason)
+
+
+# --- Auth ---
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    token = request.cookies.get(SESSION_COOKIE)
+    db = SessionLocal()
+    try:
+        if get_session_user(db, token):
+            return RedirectResponse("/", status_code=302)
+    finally:
+        db.close()
+    return templates.TemplateResponse(request, "login.html", {})
+
+
+@app.post("/api/auth/login")
+def api_login(body: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    token = auth_login(db, request, body.username, body.password)
+    set_session_cookie(response, token)
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def api_logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    auth_logout(db, request.cookies.get(SESSION_COOKIE))
+    clear_session_cookie(response)
+    return {"ok": True}
+
+
+# --- Pages ---
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard_page(request: Request):
+    return templates.TemplateResponse(request, "dashboard.html", {"page": "dashboard"})
+
+
+@app.get("/publish", response_class=HTMLResponse)
+def publish_page(request: Request):
+    return templates.TemplateResponse(request, "publish.html", {"page": "publish"})
+
+
+@app.get("/accounts", response_class=HTMLResponse)
+def accounts_page(request: Request):
+    return templates.TemplateResponse(request, "accounts.html", {"page": "accounts"})
+
+
+@app.get("/loop", response_class=HTMLResponse)
+def loop_page(request: Request):
+    return templates.TemplateResponse(request, "loop.html", {"page": "loop"})
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    return templates.TemplateResponse(request, "settings.html", {"page": "settings"})
+
+
+@app.get("/users", response_class=HTMLResponse)
+def users_page(request: Request):
+    return templates.TemplateResponse(request, "users.html", {"page": "users"})
+
+
+@app.get("/media", response_class=HTMLResponse)
+def media_page(request: Request):
+    return templates.TemplateResponse(request, "media.html", {"page": "media"})
+
+
+@app.get("/api/health")
+def health_check():
+    return {
+        "status": "ok",
+        "base_url": APP_BASE_URL,
+        "data_dir": str(os.getenv("DATA_DIR", "./data")),
+    }
+
+
+@app.get("/api/me")
+def api_me(user: AdminUser = Depends(_current_user)):
+    return {"id": user.id, "username": user.username, "role": user.role}
+
+
+@app.get("/api/users")
+def api_list_users(db: Session = Depends(get_db), user: AdminUser = Depends(_current_user)):
+    require_owner(user)
+    return [
+        {"id": u.id, "username": u.username, "role": u.role, "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None}
+        for u in list_users(db)
+    ]
+
+
+@app.post("/api/users", status_code=201)
+def api_create_user(body: UserCreateRequest, db: Session = Depends(get_db), user: AdminUser = Depends(_current_user)):
+    require_owner(user)
+    created = create_user(db, body.username, body.password)
+    return {"id": created.id, "username": created.username, "role": created.role}
+
+
+@app.delete("/api/users/{user_id}")
+def api_delete_user(user_id: int, db: Session = Depends(get_db), user: AdminUser = Depends(_current_user)):
+    require_owner(user)
+    delete_user(db, user_id, user)
+    return {"ok": True}
+
+
+# --- API: Upload ---
+
+@app.get("/api/uploads")
+def get_uploads():
+    return list_media()
+
+
+@app.post("/api/upload/video")
+async def upload_video(file: UploadFile = File(...)):
+    return save_video(file)
+
+
+@app.post("/api/upload/videos")
+async def upload_videos(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(400, "Nenhum arquivo enviado")
+    return {"uploaded": [save_video(f) for f in files]}
+
+
+@app.post("/api/upload/image")
+async def upload_image(file: UploadFile = File(...)):
+    return save_image(file)
+
+
+# --- API: Settings ---
+
+@app.get("/api/settings")
+def get_settings(db: Session = Depends(get_db)):
+    return {
+        **app_settings.get_all_settings(db),
+        "caption_max_length": INSTAGRAM_CAPTION_MAX,
+        "current_accounts": db.query(Account).count(),
+        "app_base_url": APP_BASE_URL,
+    }
+
+
+@app.put("/api/settings")
+def update_settings(body: AppSettingsUpdate, db: Session = Depends(get_db)):
+    app_settings.set_setting(db, "max_accounts", str(body.max_accounts))
+    app_settings.set_setting(db, "default_max_posts_per_day", str(body.default_max_posts_per_day))
+    app_settings.set_setting(db, "default_max_posts_per_hour", str(body.default_max_posts_per_hour))
+    app_settings.set_setting(db, "default_loop_batch_size", str(body.default_loop_batch_size))
+    app_settings.set_setting(db, "default_loop_interval_seconds", str(body.default_loop_interval_seconds))
+    db.commit()
+    return app_settings.get_all_settings(db)
+
+
+# --- API: Accounts ---
+
+@app.get("/api/accounts")
+def list_accounts(db: Session = Depends(get_db)):
+    accounts = db.query(Account).order_by(Account.id).all()
+    return [_account_dict(a, db) for a in accounts]
+
+
+@app.post("/api/accounts", status_code=201)
+def create_account(body: AccountCreate, db: Session = Depends(get_db)):
+    ok, reason = app_settings.can_add_account(db)
+    if not ok:
+        raise HTTPException(400, reason)
+
+    defaults = app_settings.get_all_settings(db)
+    account = Account(
+        name=body.name,
+        username=body.username,
+        ig_user_id=body.ig_user_id,
+        access_token=body.access_token,
+        proxy_url=body.proxy_url,
+        graph_api_version=body.graph_api_version,
+        graph_host=body.graph_host,
+        max_posts_per_day=body.max_posts_per_day or int(defaults["default_max_posts_per_day"]),
+        max_posts_per_hour=body.max_posts_per_hour or int(defaults["default_max_posts_per_hour"]),
+        default_caption=body.default_caption[:INSTAGRAM_CAPTION_MAX],
+        is_active=body.is_active,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    check_account_health(db, account)
+    db.commit()
+    return _account_dict(account, db)
+
+
+@app.get("/api/accounts/{account_id}")
+def get_account(account_id: int, db: Session = Depends(get_db)):
+    return _account_dict(_get_account_or_404(db, account_id), db)
+
+
+@app.patch("/api/accounts/{account_id}")
+def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    data = body.model_dump(exclude_unset=True)
+    if "default_caption" in data and data["default_caption"] is not None:
+        data["default_caption"] = data["default_caption"][:INSTAGRAM_CAPTION_MAX]
+    for key, value in data.items():
+        setattr(account, key, value)
+    db.commit()
+    db.refresh(account)
+    return _account_dict(account, db)
+
+
+@app.delete("/api/accounts/{account_id}")
+def delete_account(account_id: int, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    if account.loop_config:
+        db.delete(account.loop_config)
+    db.query(PostLog).filter(PostLog.account_id == account_id).delete()
+    db.delete(account)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/accounts/{account_id}/health")
+def account_health(account_id: int, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    result = check_account_health(db, account)
+    db.commit()
+    return result
+
+
+@app.get("/api/accounts/{account_id}/insights")
+def account_insights(account_id: int, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    return refresh_account_insights(db, account)
+
+
+@app.get("/api/accounts/{account_id}/posts")
+def account_posts(account_id: int, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
+    logs = (
+        db.query(PostLog)
+        .filter(PostLog.account_id == account_id)
+        .order_by(PostLog.posted_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        {
+            "id": log.id,
+            "media_id": log.media_id,
+            "media_type": log.media_type,
+            "status": log.status,
+            "error_message": log.error_message,
+            "views": log.views,
+            "impressions": log.impressions,
+            "posted_at": log.posted_at.isoformat() if log.posted_at else None,
+        }
+        for log in logs
+    ]
+
+
+# --- API: Posts ---
+
+@app.post("/api/posts/image")
+def post_image(body: PostImageRequest, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, body.account_id)
+    _enforce_post_limits(db, account)
+    caption = body.caption or account.default_caption
+    try:
+        media_id = client_from_account(account).post_image(body.image_url, caption)
+        db.add(PostLog(account_id=account.id, media_id=media_id, media_type="image", caption_preview=caption[:200], status="success"))
+        db.commit()
+        return {"media_id": media_id}
+    except InstagramAPIError as exc:
+        db.add(PostLog(account_id=account.id, media_type="image", status="error", error_message=str(exc)))
+        db.commit()
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/posts/reel")
+def post_reel(body: PostReelRequest, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, body.account_id)
+    _enforce_post_limits(db, account)
+    caption = body.caption or account.default_caption
+    try:
+        media_id = client_from_account(account).post_reel(
+            body.video_url,
+            caption,
+            cover_url=body.cover_url or None,
+            audio_name=body.audio_name or None,
+        )
+        db.add(PostLog(account_id=account.id, media_id=media_id, media_type="reel", caption_preview=caption[:200], status="success"))
+        db.commit()
+        return {"media_id": media_id}
+    except InstagramAPIError as exc:
+        db.add(PostLog(account_id=account.id, media_type="reel", status="error", error_message=str(exc)))
+        db.commit()
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/posts/story")
+def post_story(body: PostStoryRequest, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, body.account_id)
+    _enforce_post_limits(db, account)
+    if not body.image_url and not body.video_url:
+        raise HTTPException(400, "Envie uma imagem ou vídeo para o Story")
+    try:
+        media_id = client_from_account(account).post_story(
+            image_url=body.image_url or None,
+            video_url=body.video_url or None,
+        )
+        db.add(PostLog(account_id=account.id, media_id=media_id, media_type="story", status="success"))
+        db.commit()
+        return {"media_id": media_id}
+    except InstagramAPIError as exc:
+        db.add(PostLog(account_id=account.id, media_type="story", status="error", error_message=str(exc)))
+        db.commit()
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/posts/carousel")
+def post_carousel(body: PostCarouselRequest, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, body.account_id)
+    _enforce_post_limits(db, account)
+    if not 2 <= len(body.urls) <= 10:
+        raise HTTPException(400, "Carrossel precisa de 2 a 10 itens")
+    caption = body.caption or account.default_caption
+    try:
+        media_id = client_from_account(account).post_carousel(body.urls, caption)
+        db.add(PostLog(account_id=account.id, media_id=media_id, media_type="carousel", caption_preview=caption[:200], status="success"))
+        db.commit()
+        return {"media_id": media_id}
+    except InstagramAPIError as exc:
+        db.add(PostLog(account_id=account.id, media_type="carousel", status="error", error_message=str(exc)))
+        db.commit()
+        raise HTTPException(400, str(exc)) from exc
+
+
+# --- API: Loop ---
+
+@app.get("/api/loop/{account_id}")
+def get_loop(account_id: int, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if not loop:
+        return {"account_id": account_id, "videos": [], "caption": "", "batch_size": 4, "interval_seconds": 60, "is_running": False}
+    return {
+        "account_id": account_id,
+        "videos": json.loads(loop.videos_json or "[]"),
+        "caption": loop.caption,
+        "batch_size": loop.batch_size,
+        "interval_seconds": loop.interval_seconds,
+        "is_running": loop.is_running,
+        "current_index": loop.current_index,
+        "batches_completed": loop.batches_completed,
+        "total_posts": loop.total_posts,
+        "last_error": loop.last_error,
+    }
+
+
+@app.put("/api/loop/{account_id}")
+def save_loop(account_id: int, body: LoopConfigRequest, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
+    if not body.videos:
+        raise HTTPException(400, "Adicione pelo menos 1 vídeo")
+
+    videos_json = json.dumps([v.model_dump() for v in body.videos])
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if not loop:
+        loop = LoopConfig(account_id=account_id)
+        db.add(loop)
+
+    loop.videos_json = videos_json
+    loop.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
+    loop.batch_size = body.batch_size
+    loop.interval_seconds = body.interval_seconds
+    db.commit()
+    return get_loop(account_id, db)
+
+
+@app.post("/api/loop/{account_id}/start")
+def start_loop(account_id: int, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if not loop or not json.loads(loop.videos_json or "[]"):
+        raise HTTPException(400, "Configure os vídeos antes de iniciar")
+    loop.is_running = True
+    loop.last_error = ""
+    db.commit()
+    return {"is_running": True, "message": "Loop contínuo iniciado — não para após lotes"}
+
+
+@app.post("/api/loop/{account_id}/stop")
+def stop_loop(account_id: int, db: Session = Depends(get_db)):
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if loop:
+        loop.is_running = False
+        db.commit()
+    return {"is_running": False}
+
+
+# --- API: Dashboard ---
+
+@app.get("/api/dashboard")
+def dashboard_data(db: Session = Depends(get_db)):
+    accounts = db.query(Account).all()
+    total_posts = db.query(PostLog).filter(PostLog.status == "success").count()
+    errors = db.query(PostLog).filter(PostLog.status == "error").count()
+    running_loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
+    settings = app_settings.get_all_settings(db)
+
+    return {
+        "total_accounts": len(accounts),
+        "max_accounts": int(settings["max_accounts"]),
+        "total_posts": total_posts,
+        "total_errors": errors,
+        "running_loops": running_loops,
+        "app_base_url": APP_BASE_URL,
+        "accounts": [_account_dict(a, db) for a in accounts],
+    }

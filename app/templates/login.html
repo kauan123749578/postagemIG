@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entrar — Postagem IG</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <div class="login-bg"></div>
+  <div class="login-wrap">
+    <section class="login-brand">
+      <div class="logo-mark">
+        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="48" height="48" rx="14" fill="url(#lg)"/>
+          <path d="M24 14c-5.5 0-10 4.5-10 10s4.5 10 10 10 10-4.5 10-10-4.5-10-10-10zm0 16.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z" fill="white"/>
+          <circle cx="35" cy="15" r="2.5" fill="white"/>
+          <defs><linearGradient id="lg" x1="0" y1="0" x2="48" y2="48"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+        </svg>
+      </div>
+      <h1>Postagem IG</h1>
+      <p>Painel profissional para publicação via API oficial da Meta</p>
+      <ul class="login-features">
+        <li>Upload de vídeos e Stories</li>
+        <li>Loop automático multi-conta</li>
+        <li>Legendas longas e proxy por conta</li>
+      </ul>
+    </section>
+    <section class="login-card">
+      <h2>Acesso restrito</h2>
+      <p class="login-sub">Entre com suas credenciais de administrador</p>
+      <form id="login-form" onsubmit="doLogin(event)">
+        <label class="field-label">Usuário<input type="text" id="username" autocomplete="username" required></label>
+        <label class="field-label">Senha<input type="password" id="password" autocomplete="current-password" required></label>
+        <button type="submit" class="btn primary btn-full" id="login-btn">Entrar no painel</button>
+      </form>
+      <p id="login-error" class="login-error hidden"></p>
+    </section>
+  </div>
+  <script>
+    async function doLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const err = document.getElementById('login-error');
+      btn.disabled = true;
+      btn.textContent = 'Verificando...';
+      err.classList.add('hidden');
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Falha no login');
+        window.location.href = '/';
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Entrar no painel';
+      }
+    }
+  </script>
+</body>
+</html>

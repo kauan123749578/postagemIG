@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Mídia — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Biblioteca de Mídia</h1>
+    <p class="subtitle">Armazene vídeos e capas no servidor antes de publicar</p>
+  </div>
+</div>
+
+<div class="notice notice-info">
+  <strong>Para que serve esta página?</strong>
+  <p>A API da Meta <strong>não aceita arquivo direto do seu computador</strong>. Ela precisa baixar o vídeo por uma <strong>URL pública na internet</strong>.</p>
+  <p>Aqui você sobe os arquivos para o servidor do painel. Cada vídeo ganha uma URL (ex: <code>seu-dominio.com/media/videos/arquivo.mp4</code>) que é usada automaticamente em:</p>
+  <ul class="info-bullets">
+    <li><strong>Publicar</strong> — Reels, Stories e fotos</li>
+    <li><strong>Loop automático</strong> — fila de vídeos que roda em sequência</li>
+    <li><strong>Capas</strong> — thumbnail dos Reels</li>
+  </ul>
+</div>
+
+<section class="card glass">
+  <h2>Upload em lote de vídeos</h2>
+  <p class="hint" style="margin-bottom:16px">Selecione ou arraste vários vídeos de uma vez. O envio é feito um por um com barra de progresso.</p>
+
+  <div class="dropzone" id="video-dropzone">
+    <div class="dropzone-inner">
+      <p><strong>Arraste vários vídeos</strong> ou clique para selecionar</p>
+      <p class="hint">MP4, MOV, WEBM — até 500MB cada — sem limite de quantidade por lote</p>
+      <input type="file" id="video-input" accept="video/*" multiple hidden>
+      <button type="button" class="btn secondary" onclick="document.getElementById('video-input').click()">Escolher arquivos</button>
+    </div>
+  </div>
+
+  <div id="batch-queue" class="batch-queue hidden">
+    <div class="batch-header">
+      <span id="batch-count">0 vídeos na fila</span>
+      <div class="actions" style="margin:0">
+        <button type="button" class="btn primary" id="batch-start-btn" onclick="startBatchUpload()">Enviar lote</button>
+        <button type="button" class="btn secondary" onclick="clearBatchQueue()">Limpar fila</button>
+      </div>
+    </div>
+    <ul id="batch-file-list" class="batch-file-list"></ul>
+  </div>
+
+  <div id="upload-progress" class="upload-progress hidden">
+    <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+    <p id="progress-text">Preparando...</p>
+  </div>
+</section>
+
+<section class="card glass">
+  <h2>Upload em lote de capas</h2>
+  <div class="dropzone dropzone-sm" id="image-dropzone">
+    <div class="dropzone-inner">
+      <p>Arraste várias imagens JPEG/PNG para thumbnails dos Reels</p>
+      <input type="file" id="image-input" accept="image/jpeg,image/png,image/webp" multiple hidden>
+      <button type="button" class="btn secondary" onclick="document.getElementById('image-input').click()">Escolher capas</button>
+    </div>
+  </div>
+  <div id="cover-progress" class="upload-progress hidden"></div>
+</section>
+
+<section class="card glass">
+  <div class="card-header">
+    <h2>Vídeos no servidor (<span id="video-count">0</span>)</h2>
+    <div class="actions" style="margin:0">
+      <button class="btn secondary" onclick="loadMediaLibrary()">Atualizar</button>
+      <a href="/loop" class="btn primary">Usar no Loop</a>
+    </div>
+  </div>
+  <div id="video-grid" class="media-grid"></div>
+</section>
+
+<section class="card glass">
+  <h2>Capas no servidor (<span id="image-count">0</span>)</h2>
+  <div id="image-grid" class="media-grid"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>initMediaPage();</script>
+{% endblock %}

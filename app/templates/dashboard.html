@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="subtitle">Monitoramento em tempo real — servidor na nuvem, loops ativos 24/7</p>
+  </div>
+  <button class="btn primary" onclick="refreshAllInsights()">Atualizar insights</button>
+</div>
+
+<div class="notice notice-info">
+  <strong>Limite da Meta:</strong> ~<strong>100 posts/24h</strong> por conta via API — não alterável pelo painel.
+</div>
+
+<div class="stats-grid" id="stats-grid"></div>
+
+<section class="card glass">
+  <h2>Contas</h2>
+  <div class="table-wrap">
+    <table id="accounts-table">
+      <thead>
+        <tr>
+          <th>Conta</th>
+          <th>Saúde</th>
+          <th>Views</th>
+          <th>Alcance</th>
+          <th>Posts 24h</th>
+          <th>Loop</th>
+          <th>Proxy</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card glass">
+  <h2>Publicações recentes</h2>
+  <div id="recent-posts"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  initDashboard();
+  setInterval(loadDashboard, 15000);
+</script>
+{% endblock %}

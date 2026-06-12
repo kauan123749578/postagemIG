@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Postagem IG{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-bg"></div>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo-mark sm">
+        <svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="14" fill="url(#lg2)"/><path d="M24 14c-5.5 0-10 4.5-10 10s4.5 10 10 10 10-4.5 10-10-4.5-10-10-10zm0 16.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z" fill="white"/><circle cx="35" cy="15" r="2.5" fill="white"/><defs><linearGradient id="lg2" x1="0" y1="0" x2="48" y2="48"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs></svg>
+      </div>
+      <div>
+        <div class="brand-title">Postagem IG</div>
+        <div class="brand-sub">API Meta</div>
+      </div>
+    </div>
+    <nav>
+      <a href="/" class="nav-link {% if page == 'dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="/publish" class="nav-link {% if page == 'publish' %}active{% endif %}">Publicar</a>
+      <a href="/media" class="nav-link {% if page == 'media' %}active{% endif %}">Mídia</a>
+      <a href="/accounts" class="nav-link {% if page == 'accounts' %}active{% endif %}">Contas</a>
+      <a href="/loop" class="nav-link {% if page == 'loop' %}active{% endif %}">Loop</a>
+      <a href="/users" class="nav-link {% if page == 'users' %}active{% endif %}" id="nav-users">Usuários</a>
+      <a href="/settings" class="nav-link {% if page == 'settings' %}active{% endif %}">Configurações</a>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="btn ghost btn-full" onclick="doLogout()">Sair</button>
+    </div>
+  </aside>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

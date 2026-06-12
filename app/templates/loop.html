@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Loop — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Loop Automático</h1>
+    <p class="subtitle">Publicação contínua de Reels — não interrompe entre lotes</p>
+  </div>
+</div>
+
+<section class="card glass">
+  <form id="loop-form" onsubmit="saveLoop(event)">
+    <label class="field-label">Conta<select id="loop-account" onchange="loadLoopConfig()" required></select></label>
+    <div class="row">
+      <label class="field-label">Tamanho do lote<input type="number" id="batch_size" value="4" min="1" max="50"></label>
+      <label class="field-label">Intervalo (seg)<input type="number" id="interval_seconds" value="60" min="0" max="3600"></label>
+    </div>
+
+    <div class="caption-editor">
+      <div class="caption-header">
+        <label class="field-label no-margin">Legenda do loop</label>
+        <span class="caption-counter"><span id="loop-caption-count">0</span> / 2200</span>
+      </div>
+      <textarea id="loop-caption" class="caption-large" rows="10" maxlength="2200" placeholder="Legenda completa para todos os vídeos do loop..."></textarea>
+    </div>
+
+    <h3 class="section-title">Vídeos</h3>
+    <div class="dropzone dropzone-inline" id="loop-video-dropzone">
+      <div class="dropzone-inner">
+        <p><strong>Arraste vídeos</strong> para adicionar ao loop em lote</p>
+        <input type="file" id="loop-bulk-upload" accept="video/*" multiple hidden>
+        <button type="button" class="btn primary" onclick="document.getElementById('loop-bulk-upload').click()">Upload em lote</button>
+      </div>
+    </div>
+    <div id="video-items"></div>
+    <button type="button" class="btn secondary" onclick="addVideoRow()">Adicionar manualmente</button>
+
+    <div class="actions">
+      <button type="submit" class="btn primary">Salvar</button>
+      <button type="button" class="btn success" onclick="startLoop()">Iniciar loop</button>
+      <button type="button" class="btn danger" onclick="stopLoop()">Parar loop</button>
+    </div>
+  </form>
+</section>
+
+<section class="card glass">
+  <h2>Status</h2>
+  <div id="loop-status" class="status-box">Selecione uma conta</div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  initLoopPage();
+  setInterval(loadLoopConfig, 10000);
+</script>
+{% endblock %}
