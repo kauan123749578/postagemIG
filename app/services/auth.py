@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -40,14 +41,27 @@ def _utcnow() -> datetime:
 
 
 def ensure_admin(db: Session) -> None:
-    if db.query(AdminUser).count() > 0:
-        return
     username = os.getenv("ADMIN_USERNAME", "admin").strip()
     password = os.getenv("ADMIN_PASSWORD", "").strip()
+
+    owner = db.query(AdminUser).filter(AdminUser.role == "owner").first()
+    if owner:
+        if password and len(password) >= MIN_PASSWORD_LENGTH:
+            owner.username = username
+            owner.password_hash = hash_password(password)
+            owner.is_active = True
+            db.commit()
+            logging.info("Credenciais do admin sincronizadas com variáveis de ambiente")
+        return
+
+    if db.query(AdminUser).count() > 0:
+        return
+
     if not password or len(password) < MIN_PASSWORD_LENGTH:
         password = secrets.token_urlsafe(18)
         print(f"[SEGURANÇA] Admin criado — usuário: {username} | senha: {password}")
-        print("[SEGURANÇA] Defina ADMIN_PASSWORD no .env e reinicie o servidor.")
+        print(f"[SEGURANÇA] ADMIN_PASSWORD precisa ter {MIN_PASSWORD_LENGTH}+ caracteres. Veja os logs do deploy.")
+
     db.add(AdminUser(username=username, password_hash=hash_password(password), role="owner"))
     db.commit()
 
