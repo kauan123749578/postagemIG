@@ -154,3 +154,28 @@ class ScheduledPost(Base):
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     batch: Mapped["ScheduledBatch | None"] = relationship(back_populates="items")
+
+
+class RecurringBatchConfig(Base):
+    __tablename__ = "recurring_batch_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), unique=True)
+    name: Mapped[str] = mapped_column(String(120), default="Lote recorrente")
+    videos_json: Mapped[str] = mapped_column(Text, default="[]")
+    caption: Mapped[str] = mapped_column(Text, default="")
+    fallback_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+
+    duration_hours: Mapped[int] = mapped_column(Integer, default=12)
+    cycle_interval_hours: Mapped[int] = mapped_column(Integer, default=1)
+    video_interval_seconds: Mapped[int] = mapped_column(Integer, default=60)
+
+    is_running: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cycle_video_index: Mapped[int] = mapped_column(Integer, default=0)
+    cycles_completed: Mapped[int] = mapped_column(Integer, default=0)
+    total_posts: Mapped[int] = mapped_column(Integer, default=0)
+    last_post_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_cycle_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str] = mapped_column(Text, default="")

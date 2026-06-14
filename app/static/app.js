@@ -92,8 +92,22 @@ async function loadDashboard() {
     <div class="stat-card"><div class="value">${data.total_posts}</div><div class="label">Posts publicados</div></div>
     <div class="stat-card"><div class="value">${data.total_errors}</div><div class="label">Erros</div></div>
     <div class="stat-card"><div class="value">${data.running_loops}</div><div class="label">Loops ativos</div></div>
+    <div class="stat-card"><div class="value">${data.running_recurring || 0}</div><div class="label">Lotes recorrentes</div></div>
     <div class="stat-card"><div class="value">${data.pending_schedule || 0}</div><div class="label">Agendados</div></div>
   `;
+
+  const storageBanner = document.getElementById("storage-banner");
+  if (storageBanner && data.storage) {
+    if (data.storage.persistent_volume && data.storage.writable) {
+      storageBanner.className = "notice notice-info";
+      storageBanner.innerHTML = `<strong>Armazenamento persistente:</strong> volume ativo em <code>${data.storage.data_dir}</code> — contas, vídeos e banco são mantidos nos redeploys.`;
+      storageBanner.classList.remove("hidden");
+    } else {
+      storageBanner.className = "notice notice-warning";
+      storageBanner.innerHTML = `<strong>Atenção — dados podem ser perdidos!</strong> Monte um volume Railway em <code>/data</code> e defina <code>DATA_DIR=/data</code>. Sem isso, contas e vídeos somem a cada atualização.`;
+      storageBanner.classList.remove("hidden");
+    }
+  }
 
   postsChart = renderChart("posts-chart", {
     type: "bar",
@@ -382,7 +396,7 @@ function renderAccountsList() {
 }
 
 function populateAccountSelects() {
-  ["post-account", "loop-account", "pub-account", "sch-account"].forEach(id => {
+  ["post-account", "loop-account", "pub-account", "sch-account", "recurring-account"].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const current = sel.value;
@@ -595,8 +609,9 @@ function initPublishPage() {
 
 let videoRowCounter = 0;
 
-function addVideoRow(video = {}) {
-  const container = document.getElementById("video-items");
+function addVideoRow(video = {}, containerId = "video-items") {
+  const container = document.getElementById(containerId);
+  if (!container) return;
   const id = ++videoRowCounter;
   const row = document.createElement("div");
   row.className = "video-row";
@@ -635,11 +650,17 @@ function addVideoRow(video = {}) {
   });
 }
 
-async function bulkUploadToLoop(files) {
+async function bulkUploadToLoop(files, containerId = "video-items") {
   toast(`Enviando ${files.length} vídeo(s)...`);
-  const result = await uploadFiles("/api/upload/videos", files);
-  result.uploaded.forEach(v => addVideoRow({ video_url: v.url }));
-  toast(`${result.uploaded.length} vídeo(s) adicionados ao loop`);
+  let ok = 0;
+  for (const file of files) {
+    try {
+      const uploaded = await uploadFile("/api/upload/video", file);
+      addVideoRow({ video_url: uploaded.url }, containerId);
+      ok++;
+    } catch { /* continue */ }
+  }
+  toast(`${ok} vídeo(s) adicionados`);
 }
 
 async function loadLoopConfig() {
@@ -708,15 +729,148 @@ async function stopLoop() {
   loadLoopConfig();
 }
 
+function setLoopMode(mode) {
+  document.querySelectorAll(".tab[data-mode]").forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
+  document.getElementById("panel-loop")?.classList.toggle("hidden", mode !== "loop");
+  document.getElementById("panel-recurring")?.classList.toggle("hidden", mode !== "recurring");
+}
+
+function getRecurringVideos() {
+  return [...document.querySelectorAll("#recurring-video-items .video-row")].map(row => ({
+    video_url: row.querySelector(".video-url").value.trim(),
+    cover_url: row.querySelector(".cover-url").value.trim(),
+  })).filter(v => v.video_url);
+}
+
+async function loadRecurringConfig() {
+  const accountId = document.getElementById("recurring-account")?.value
+    || document.getElementById("loop-account")?.value;
+  if (!accountId) return;
+
+  const recurringSel = document.getElementById("recurring-account");
+  const loopSel = document.getElementById("loop-account");
+  if (recurringSel && loopSel && recurringSel.value !== loopSel.value) {
+    recurringSel.value = loopSel.value;
+  }
+
+  const data = await api(`/api/recurring-batch/${accountId}`);
+  document.getElementById("recurring-name").value = data.name || "Lote recorrente";
+  document.getElementById("recurring-duration").value = String(data.duration_hours || 12);
+  document.getElementById("recurring-cycle-hours").value = data.cycle_interval_hours || 1;
+  document.getElementById("recurring-video-interval").value = data.video_interval_seconds || 60;
+  document.getElementById("recurring-caption").value = data.caption || "";
+  document.getElementById("recurring-hint-hours").textContent = data.cycle_interval_hours || 1;
+
+  const container = document.getElementById("recurring-video-items");
+  if (container) {
+    container.innerHTML = "";
+    (data.videos || []).forEach(v => addVideoRow(v, "recurring-video-items"));
+  }
+
+  const status = document.getElementById("recurring-status");
+  if (status) {
+    const lines = [
+      `Status: ${data.is_running ? "RODANDO" : "Parado"}`,
+      `Duração: ${data.duration_hours}h | Intervalo entre lotes: ${data.cycle_interval_hours}h`,
+      `Ciclos completos: ${data.cycles_completed || 0} | Total posts: ${data.total_posts || 0}`,
+    ];
+    if (data.is_running && data.remaining_minutes != null) {
+      lines.push(`Tempo restante: ~${Math.floor(data.remaining_minutes / 60)}h ${data.remaining_minutes % 60}min`);
+    }
+    if (data.ends_at) lines.push(`Termina em: ${formatDateTime(data.ends_at)}`);
+    lines.push(`Último erro: ${data.last_error || "nenhum"}`);
+    status.textContent = lines.join("\n");
+  }
+}
+
+async function saveRecurringBatch(e) {
+  if (e?.preventDefault) e.preventDefault();
+  const accountId = document.getElementById("recurring-account").value
+    || document.getElementById("loop-account").value;
+  const videos = getRecurringVideos();
+  if (!videos.length) throw new Error("Adicione pelo menos 1 vídeo ao lote");
+
+  await api(`/api/recurring-batch/${accountId}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: document.getElementById("recurring-name").value,
+      videos,
+      caption: document.getElementById("recurring-caption").value,
+      duration_hours: +document.getElementById("recurring-duration").value,
+      cycle_interval_hours: +document.getElementById("recurring-cycle-hours").value,
+      video_interval_seconds: +document.getElementById("recurring-video-interval").value,
+    }),
+  });
+  toast("Lote recorrente salvo");
+  loadRecurringConfig();
+}
+
+async function startRecurringBatch() {
+  const accountId = document.getElementById("recurring-account").value
+    || document.getElementById("loop-account").value;
+  try {
+    await saveRecurringBatch({ preventDefault: () => {} });
+    const duration = +document.getElementById("recurring-duration").value;
+    const res = await api(`/api/recurring-batch/${accountId}/start`, {
+      method: "POST",
+      body: JSON.stringify({ duration_hours: duration }),
+    });
+    toast(res.message);
+    loadRecurringConfig();
+    loadLoopConfig();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function stopRecurringBatch() {
+  const accountId = document.getElementById("recurring-account").value
+    || document.getElementById("loop-account").value;
+  await api(`/api/recurring-batch/${accountId}/stop`, { method: "POST" });
+  toast("Lote recorrente parado");
+  loadRecurringConfig();
+}
+
 async function initLoopPage() {
   await loadAccounts();
-  setupDropzone("loop-video-dropzone", "loop-bulk-upload", bulkUploadToLoop);
+  populateAccountSelects();
+
+  setupDropzone("loop-video-dropzone", "loop-bulk-upload", files => bulkUploadToLoop(files, "video-items"));
+  setupDropzone("recurring-dropzone", "recurring-upload", files => bulkUploadToLoop(files, "recurring-video-items"));
+
   const loopCap = document.getElementById("loop-caption");
   const loopCounter = document.getElementById("loop-caption-count");
   if (loopCap && loopCounter) {
     loopCap.addEventListener("input", () => { loopCounter.textContent = loopCap.value.length; });
   }
+
+  const recCap = document.getElementById("recurring-caption");
+  const recCounter = document.getElementById("recurring-caption-count");
+  if (recCap && recCounter) {
+    recCap.addEventListener("input", () => { recCounter.textContent = recCap.value.length; });
+  }
+
+  document.getElementById("recurring-cycle-hours")?.addEventListener("input", e => {
+    const hint = document.getElementById("recurring-hint-hours");
+    if (hint) hint.textContent = e.target.value;
+  });
+
+  document.getElementById("loop-account")?.addEventListener("change", () => {
+    const rec = document.getElementById("recurring-account");
+    if (rec) rec.value = document.getElementById("loop-account").value;
+    loadLoopConfig();
+    loadRecurringConfig();
+  });
+
+  document.getElementById("recurring-account")?.addEventListener("change", () => {
+    const loop = document.getElementById("loop-account");
+    if (loop) loop.value = document.getElementById("recurring-account").value;
+    loadRecurringConfig();
+    loadLoopConfig();
+  });
+
   loadLoopConfig();
+  loadRecurringConfig();
 }
 
 // --- Schedule ---

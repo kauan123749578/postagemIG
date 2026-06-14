@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import APP_BASE_URL, IMAGES_DIR, VIDEOS_DIR
 from app.database import Base, SessionLocal, engine, get_db, migrate_schema
 from app.models import AdminUser
-from app.models import Account, LoopConfig, PostLog, ScheduledBatch, ScheduledPost
+from app.models import Account, LoopConfig, PostLog, RecurringBatchConfig, ScheduledBatch, ScheduledPost
 from app.services.auth import (
     SESSION_COOKIE,
     clear_session_cookie,
@@ -32,9 +33,11 @@ from app.services.health import check_account_health, refresh_account_insights
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
 from app.services.loop_worker import start_loop_worker
 from app.services.publisher import publish_reel
+from app.services.recurring_batch_worker import start_recurring_batch_worker
 from app.services.schedule_worker import start_schedule_worker
 from app.services.media_storage import list_media, save_image, save_video
 from app.services.rate_limit import can_post, usage_stats
+from app.services.storage import get_storage_status
 from app.services import settings as app_settings
 
 logging.basicConfig(level=logging.INFO)
@@ -60,6 +63,7 @@ async def lifespan(_: FastAPI):
         db.close()
     start_loop_worker()
     start_schedule_worker()
+    start_recurring_batch_worker()
     yield
 
 
@@ -209,6 +213,20 @@ class ScheduleBatchCreate(BaseModel):
     interval_minutes: int = Field(default=60, ge=1, le=1440)
     videos: list[LoopVideoItem] = []
     caption: str = ""
+
+
+class RecurringBatchRequest(BaseModel):
+    name: str = "Lote recorrente"
+    videos: list[LoopVideoItem]
+    caption: str = ""
+    fallback_account_id: int | None = None
+    duration_hours: int = Field(default=12, ge=1, le=168)
+    cycle_interval_hours: int = Field(default=1, ge=1, le=24)
+    video_interval_seconds: int = Field(default=60, ge=0, le=3600)
+
+
+class RecurringBatchStart(BaseModel):
+    duration_hours: int | None = Field(default=None, ge=1, le=168)
 
 
 # --- Helpers ---
@@ -363,11 +381,17 @@ def media_page(request: Request):
 
 @app.get("/api/health")
 def health_check():
+    storage = get_storage_status()
     return {
         "status": "ok",
         "base_url": APP_BASE_URL,
-        "data_dir": str(os.getenv("DATA_DIR", "./data")),
+        "storage": storage,
     }
+
+
+@app.get("/api/storage")
+def storage_status():
+    return get_storage_status()
 
 
 @app.get("/api/me")
@@ -684,6 +708,116 @@ def stop_loop(account_id: int, db: Session = Depends(get_db)):
     return {"is_running": False}
 
 
+def _recurring_dict(config: RecurringBatchConfig) -> dict:
+    now = datetime.now(timezone.utc)
+    ends_at = config.ends_at
+    if ends_at and ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=timezone.utc)
+    remaining = None
+    if config.is_running and ends_at:
+        remaining = max(0, int((ends_at - now).total_seconds() // 60))
+    return {
+        "account_id": config.account_id,
+        "name": config.name,
+        "videos": json.loads(config.videos_json or "[]"),
+        "caption": config.caption,
+        "fallback_account_id": config.fallback_account_id,
+        "duration_hours": config.duration_hours,
+        "cycle_interval_hours": config.cycle_interval_hours,
+        "video_interval_seconds": config.video_interval_seconds,
+        "is_running": config.is_running,
+        "started_at": config.started_at.isoformat() if config.started_at else None,
+        "ends_at": config.ends_at.isoformat() if config.ends_at else None,
+        "cycles_completed": config.cycles_completed,
+        "total_posts": config.total_posts,
+        "cycle_video_index": config.cycle_video_index,
+        "last_error": config.last_error,
+        "remaining_minutes": remaining,
+    }
+
+
+# --- API: Recurring Batch ---
+
+@app.get("/api/recurring-batch/{account_id}")
+def get_recurring_batch(account_id: int, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
+    config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+    if not config:
+        return {
+            "account_id": account_id,
+            "name": "Lote recorrente",
+            "videos": [],
+            "caption": "",
+            "duration_hours": 12,
+            "cycle_interval_hours": 1,
+            "video_interval_seconds": 60,
+            "is_running": False,
+            "cycles_completed": 0,
+            "total_posts": 0,
+            "last_error": "",
+        }
+    return _recurring_dict(config)
+
+
+@app.put("/api/recurring-batch/{account_id}")
+def save_recurring_batch(account_id: int, body: RecurringBatchRequest, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
+    if not body.videos:
+        raise HTTPException(400, "Adicione pelo menos 1 vídeo ao lote")
+
+    config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+    if not config:
+        config = RecurringBatchConfig(account_id=account_id)
+        db.add(config)
+
+    config.name = body.name
+    config.videos_json = json.dumps([v.model_dump() for v in body.videos])
+    config.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
+    config.fallback_account_id = body.fallback_account_id
+    config.duration_hours = body.duration_hours
+    config.cycle_interval_hours = body.cycle_interval_hours
+    config.video_interval_seconds = body.video_interval_seconds
+    db.commit()
+    return _recurring_dict(config)
+
+
+@app.post("/api/recurring-batch/{account_id}/start")
+def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+    if not config or not json.loads(config.videos_json or "[]"):
+        raise HTTPException(400, "Configure os vídeos do lote antes de iniciar")
+
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if loop and loop.is_running:
+        loop.is_running = False
+
+    duration = body.duration_hours or config.duration_hours
+    now = datetime.now(timezone.utc)
+    config.duration_hours = duration
+    config.is_running = True
+    config.started_at = now
+    config.ends_at = now + timedelta(hours=duration)
+    config.cycle_video_index = 0
+    config.last_cycle_at = None
+    config.last_error = ""
+    db.commit()
+    return {
+        **_recurring_dict(config),
+        "message": f"Lote recorrente ativo por {duration}h — 1 lote a cada {config.cycle_interval_hours}h",
+    }
+
+
+@app.post("/api/recurring-batch/{account_id}/stop")
+def stop_recurring_batch(account_id: int, db: Session = Depends(get_db)):
+    config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+    if config:
+        config.is_running = False
+        config.last_error = "Parado manualmente"
+        db.commit()
+    return {"is_running": False}
+
+
 # --- API: Schedule ---
 
 @app.get("/api/schedule")
@@ -790,6 +924,7 @@ def dashboard_data(db: Session = Depends(get_db)):
     total_posts = db.query(PostLog).filter(PostLog.status == "success").count()
     errors = db.query(PostLog).filter(PostLog.status == "error").count()
     running_loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
+    running_recurring = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.is_running.is_(True)).count()
     pending_schedule = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
     settings = app_settings.get_all_settings(db)
 
@@ -825,8 +960,10 @@ def dashboard_data(db: Session = Depends(get_db)):
         "total_posts": total_posts,
         "total_errors": errors,
         "running_loops": running_loops,
+        "running_recurring": running_recurring,
         "pending_schedule": pending_schedule,
         "app_base_url": APP_BASE_URL,
+        "storage": get_storage_status(),
         "accounts": [_account_dict(a, db) for a in accounts],
         "chart": {"labels": chart_days, "success": chart_success, "errors": chart_errors},
         "schedule_stats": schedule_stats,

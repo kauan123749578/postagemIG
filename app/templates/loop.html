@@ -3,12 +3,17 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <h1>Loop Automático</h1>
-    <p class="subtitle">Publicação contínua de Reels — não interrompe entre lotes</p>
+    <h1>Loop &amp; Lotes</h1>
+    <p class="subtitle">Loop contínuo ou lote recorrente — repete o mesmo lote a cada hora por 12/24h</p>
   </div>
 </div>
 
-<section class="card glass">
+<div class="tabs" style="margin-bottom:24px">
+  <button type="button" class="tab active" data-mode="loop" onclick="setLoopMode('loop')">Loop contínuo</button>
+  <button type="button" class="tab" data-mode="recurring" onclick="setLoopMode('recurring')">Lote recorrente</button>
+</div>
+
+<section id="panel-loop" class="card glass glow">
   <form id="loop-form" onsubmit="saveLoop(event)">
     <label class="field-label">Conta<select id="loop-account" onchange="loadLoopConfig()" required></select></label>
     <div class="row">
@@ -21,19 +26,16 @@
         <label class="field-label no-margin">Legenda do loop</label>
         <span class="caption-counter"><span id="loop-caption-count">0</span> / 2200</span>
       </div>
-      <textarea id="loop-caption" class="caption-large" rows="10" maxlength="2200" placeholder="Legenda completa para todos os vídeos do loop..."></textarea>
+      <textarea id="loop-caption" class="caption-large" rows="6" maxlength="2200" placeholder="Legenda para todos os vídeos..."></textarea>
     </div>
 
     <h3 class="section-title">Vídeos</h3>
-    <div class="dropzone dropzone-inline" id="loop-video-dropzone">
-      <div class="dropzone-inner">
-        <p><strong>Arraste vídeos</strong> para adicionar ao loop em lote</p>
-        <input type="file" id="loop-bulk-upload" accept="video/*" multiple hidden>
-        <button type="button" class="btn primary" onclick="document.getElementById('loop-bulk-upload').click()">Upload em lote</button>
-      </div>
+    <div class="dropzone dropzone-lg" id="loop-video-dropzone">
+      <div class="dropzone-icon">🎬</div>
+      <p><strong>Arraste vídeos</strong> para adicionar ao loop</p>
+      <input type="file" id="loop-bulk-upload" accept="video/*" multiple hidden>
     </div>
     <div id="video-items"></div>
-    <button type="button" class="btn secondary" onclick="addVideoRow()">Adicionar manualmente</button>
 
     <div class="actions">
       <button type="submit" class="btn primary">Salvar</button>
@@ -41,16 +43,59 @@
       <button type="button" class="btn danger" onclick="stopLoop()">Parar loop</button>
     </div>
   </form>
+  <div id="loop-status" class="status-box" style="margin-top:20px">Selecione uma conta</div>
 </section>
 
-<section class="card glass">
-  <h2>Status</h2>
-  <div id="loop-status" class="status-box">Selecione uma conta</div>
+<section id="panel-recurring" class="card glass glow hidden">
+  <form id="recurring-form" onsubmit="saveRecurringBatch(event)">
+    <label class="field-label">Conta<select id="recurring-account" onchange="loadRecurringConfig()" required></select></label>
+    <label class="field-label">Nome do lote<input id="recurring-name" value="Lote recorrente"></label>
+
+    <div class="row">
+      <label class="field-label">Duração total
+        <select id="recurring-duration">
+          <option value="12">12 horas</option>
+          <option value="24">24 horas</option>
+          <option value="6">6 horas</option>
+          <option value="48">48 horas</option>
+        </select>
+      </label>
+      <label class="field-label">Intervalo entre lotes (horas)<input type="number" id="recurring-cycle-hours" value="1" min="1" max="24"></label>
+      <label class="field-label">Intervalo entre vídeos (seg)<input type="number" id="recurring-video-interval" value="60" min="0" max="3600"></label>
+    </div>
+
+    <div class="notice notice-info">
+      <strong>Como funciona:</strong> a cada <span id="recurring-hint-hours">1</span>h o sistema posta <strong>todo o lote</strong> de vídeos. Repete até completar a duração escolhida e para sozinho.
+    </div>
+
+    <div class="caption-editor">
+      <div class="caption-header">
+        <label class="field-label no-margin">Legenda do lote</label>
+        <span class="caption-counter"><span id="recurring-caption-count">0</span> / 2200</span>
+      </div>
+      <textarea id="recurring-caption" class="caption-large" rows="4" maxlength="2200"></textarea>
+    </div>
+
+    <h3 class="section-title">Vídeos do lote</h3>
+    <div class="dropzone dropzone-lg" id="recurring-dropzone">
+      <div class="dropzone-icon">📦</div>
+      <p><strong>Arraste vídeos</strong> — upload automático para URL pública</p>
+      <input type="file" id="recurring-upload" accept="video/*" multiple hidden>
+    </div>
+    <div id="recurring-video-items"></div>
+
+    <div class="actions">
+      <button type="submit" class="btn primary">Salvar lote</button>
+      <button type="button" class="btn success" onclick="startRecurringBatch()">Iniciar lote recorrente</button>
+      <button type="button" class="btn danger" onclick="stopRecurringBatch()">Parar</button>
+    </div>
+  </form>
+  <div id="recurring-status" class="status-box" style="margin-top:20px">Configure e inicie o lote recorrente</div>
 </section>
 {% endblock %}
 {% block scripts %}
 <script>
   initLoopPage();
-  setInterval(loadLoopConfig, 10000);
+  setInterval(() => { loadLoopConfig(); loadRecurringConfig(); }, 10000);
 </script>
 {% endblock %}

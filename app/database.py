@@ -72,6 +72,28 @@ def migrate_schema() -> None:
                 posted_at DATETIME
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS recurring_batch_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL UNIQUE,
+                name VARCHAR(120) DEFAULT 'Lote recorrente',
+                videos_json TEXT DEFAULT '[]',
+                caption TEXT DEFAULT '',
+                fallback_account_id INTEGER,
+                duration_hours INTEGER DEFAULT 12,
+                cycle_interval_hours INTEGER DEFAULT 1,
+                video_interval_seconds INTEGER DEFAULT 60,
+                is_running BOOLEAN DEFAULT 0,
+                started_at DATETIME,
+                ends_at DATETIME,
+                cycle_video_index INTEGER DEFAULT 0,
+                cycles_completed INTEGER DEFAULT 0,
+                total_posts INTEGER DEFAULT 0,
+                last_post_at DATETIME,
+                last_cycle_at DATETIME,
+                last_error TEXT DEFAULT ''
+            )
+        """)
         conn.commit()
     finally:
         conn.close()
