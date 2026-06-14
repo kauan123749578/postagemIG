@@ -733,28 +733,51 @@ async function bulkUploadToLoop(files, containerId = "video-items") {
   toast(`${ok} vídeo(s) adicionados`);
 }
 
-async function loadLoopConfig() {
+function formHasFocus(formId) {
+  const form = document.getElementById(formId);
+  return form && form.contains(document.activeElement);
+}
+
+function renderLoopStatus(data) {
+  const status = document.getElementById("loop-status");
+  if (!status) return;
+  status.textContent = [
+    `Status: ${data.is_running ? "RODANDO (contínuo)" : "Parado"}`,
+    `Índice: ${data.current_index ?? 0}`,
+    `Lotes completados: ${data.batches_completed ?? 0}`,
+    `Total posts: ${data.total_posts ?? 0}`,
+    `Último erro: ${data.last_error || "nenhum"}`,
+  ].join("\n");
+}
+
+async function refreshLoopStatus() {
+  const accountId = document.getElementById("loop-account")?.value;
+  if (!accountId) return;
+  try {
+    const data = await api(`/api/loop/${accountId}`);
+    renderLoopStatus(data);
+  } catch { /* ignore polling errors */ }
+}
+
+async function loadLoopConfig(force = false) {
   const accountId = document.getElementById("loop-account")?.value;
   if (!accountId) return;
   const data = await api(`/api/loop/${accountId}`);
+  renderLoopStatus(data);
+
+  if (!force && formHasFocus("loop-form")) return;
+
   document.getElementById("batch_size").value = data.batch_size;
   document.getElementById("interval_seconds").value = data.interval_seconds;
   document.getElementById("loop-caption").value = data.caption || "";
+  const loopCounter = document.getElementById("loop-caption-count");
+  if (loopCounter) loopCounter.textContent = (data.caption || "").length;
   setCoverPreview("loop-cover-preview", "loop-cover-url", data.batch_cover_url || "");
 
   const container = document.getElementById("video-items");
-  container.innerHTML = "";
-  (data.videos || []).forEach(v => addVideoRow(v));
-
-  const status = document.getElementById("loop-status");
-  if (status) {
-    status.textContent = [
-      `Status: ${data.is_running ? "RODANDO (contínuo)" : "Parado"}`,
-      `Índice: ${data.current_index}`,
-      `Lotes completados: ${data.batches_completed}`,
-      `Total posts: ${data.total_posts}`,
-      `Último erro: ${data.last_error || "nenhum"}`,
-    ].join("\n");
+  if (container) {
+    container.innerHTML = "";
+    (data.videos || []).forEach(v => addVideoRow(v));
   }
 }
 
@@ -779,7 +802,7 @@ async function saveLoop(e) {
     }),
   });
   toast("Loop salvo");
-  loadLoopConfig();
+  loadLoopConfig(true);
 }
 
 async function startLoop() {
@@ -788,7 +811,7 @@ async function startLoop() {
     await saveLoop({ preventDefault: () => {} });
     const res = await api(`/api/loop/${accountId}/start`, { method: "POST" });
     toast(res.message);
-    loadLoopConfig();
+    loadLoopConfig(true);
   } catch (err) {
     toast(err.message, "error");
   }
@@ -798,7 +821,7 @@ async function stopLoop() {
   const accountId = document.getElementById("loop-account").value;
   await api(`/api/loop/${accountId}/stop`, { method: "POST" });
   toast("Loop parado");
-  loadLoopConfig();
+  loadLoopConfig(true);
 }
 
 function setLoopMode(mode) {
@@ -814,7 +837,33 @@ function getRecurringVideos() {
   })).filter(v => v.video_url);
 }
 
-async function loadRecurringConfig() {
+function renderRecurringStatus(data) {
+  const status = document.getElementById("recurring-status");
+  if (!status) return;
+  const lines = [
+    `Status: ${data.is_running ? "RODANDO" : "Parado"}`,
+    `Duração: ${data.duration_hours}h | Intervalo entre lotes: ${data.cycle_interval_hours}h`,
+    `Ciclos completos: ${data.cycles_completed || 0} | Total posts: ${data.total_posts || 0}`,
+  ];
+  if (data.is_running && data.remaining_minutes != null) {
+    lines.push(`Tempo restante: ~${Math.floor(data.remaining_minutes / 60)}h ${data.remaining_minutes % 60}min`);
+  }
+  if (data.ends_at) lines.push(`Termina em: ${formatDateTime(data.ends_at)}`);
+  lines.push(`Último erro: ${data.last_error || "nenhum"}`);
+  status.textContent = lines.join("\n");
+}
+
+async function refreshRecurringStatus() {
+  const accountId = document.getElementById("recurring-account")?.value
+    || document.getElementById("loop-account")?.value;
+  if (!accountId) return;
+  try {
+    const data = await api(`/api/recurring-batch/${accountId}`);
+    renderRecurringStatus(data);
+  } catch { /* ignore polling errors */ }
+}
+
+async function loadRecurringConfig(force = false) {
   const accountId = document.getElementById("recurring-account")?.value
     || document.getElementById("loop-account")?.value;
   if (!accountId) return;
@@ -826,11 +875,17 @@ async function loadRecurringConfig() {
   }
 
   const data = await api(`/api/recurring-batch/${accountId}`);
+  renderRecurringStatus(data);
+
+  if (!force && formHasFocus("recurring-form")) return;
+
   document.getElementById("recurring-name").value = data.name || "Lote recorrente";
   document.getElementById("recurring-duration").value = String(data.duration_hours || 12);
   document.getElementById("recurring-cycle-hours").value = data.cycle_interval_hours || 1;
   document.getElementById("recurring-video-interval").value = data.video_interval_seconds || 60;
   document.getElementById("recurring-caption").value = data.caption || "";
+  const recCounter = document.getElementById("recurring-caption-count");
+  if (recCounter) recCounter.textContent = (data.caption || "").length;
   setCoverPreview("recurring-cover-preview", "recurring-cover-url", data.cover_url || "");
   document.getElementById("recurring-hint-hours").textContent = data.cycle_interval_hours || 1;
 
@@ -838,21 +893,6 @@ async function loadRecurringConfig() {
   if (container) {
     container.innerHTML = "";
     (data.videos || []).forEach(v => addVideoRow(v, "recurring-video-items"));
-  }
-
-  const status = document.getElementById("recurring-status");
-  if (status) {
-    const lines = [
-      `Status: ${data.is_running ? "RODANDO" : "Parado"}`,
-      `Duração: ${data.duration_hours}h | Intervalo entre lotes: ${data.cycle_interval_hours}h`,
-      `Ciclos completos: ${data.cycles_completed || 0} | Total posts: ${data.total_posts || 0}`,
-    ];
-    if (data.is_running && data.remaining_minutes != null) {
-      lines.push(`Tempo restante: ~${Math.floor(data.remaining_minutes / 60)}h ${data.remaining_minutes % 60}min`);
-    }
-    if (data.ends_at) lines.push(`Termina em: ${formatDateTime(data.ends_at)}`);
-    lines.push(`Último erro: ${data.last_error || "nenhum"}`);
-    status.textContent = lines.join("\n");
   }
 }
 
@@ -876,7 +916,7 @@ async function saveRecurringBatch(e) {
     }),
   });
   toast("Lote recorrente salvo");
-  loadRecurringConfig();
+  loadRecurringConfig(true);
 }
 
 async function startRecurringBatch() {
@@ -890,8 +930,8 @@ async function startRecurringBatch() {
       body: JSON.stringify({ duration_hours: duration }),
     });
     toast(res.message);
-    loadRecurringConfig();
-    loadLoopConfig();
+    loadRecurringConfig(true);
+    loadLoopConfig(true);
   } catch (err) {
     toast(err.message, "error");
   }
@@ -902,7 +942,7 @@ async function stopRecurringBatch() {
     || document.getElementById("loop-account").value;
   await api(`/api/recurring-batch/${accountId}/stop`, { method: "POST" });
   toast("Lote recorrente parado");
-  loadRecurringConfig();
+  loadRecurringConfig(true);
 }
 
 async function initLoopPage() {
@@ -935,19 +975,19 @@ async function initLoopPage() {
   document.getElementById("loop-account")?.addEventListener("change", () => {
     const rec = document.getElementById("recurring-account");
     if (rec) rec.value = document.getElementById("loop-account").value;
-    loadLoopConfig();
-    loadRecurringConfig();
+    loadLoopConfig(true);
+    loadRecurringConfig(true);
   });
 
   document.getElementById("recurring-account")?.addEventListener("change", () => {
     const loop = document.getElementById("loop-account");
     if (loop) loop.value = document.getElementById("recurring-account").value;
-    loadRecurringConfig();
-    loadLoopConfig();
+    loadRecurringConfig(true);
+    loadLoopConfig(true);
   });
 
-  loadLoopConfig();
-  loadRecurringConfig();
+  loadLoopConfig(true);
+  loadRecurringConfig(true);
 }
 
 // --- Schedule ---

@@ -15,7 +15,7 @@
 
 <section id="panel-loop" class="card glass glow">
   <form id="loop-form" onsubmit="saveLoop(event)">
-    <label class="field-label">Conta<select id="loop-account" onchange="loadLoopConfig()" required></select></label>
+    <label class="field-label">Conta<select id="loop-account" required></select></label>
     <div class="row">
       <label class="field-label">Tamanho do lote<input type="number" id="batch_size" value="4" min="1" max="50"></label>
       <label class="field-label">Intervalo (seg)<input type="number" id="interval_seconds" value="60" min="0" max="3600"></label>
@@ -59,7 +59,7 @@
 
 <section id="panel-recurring" class="card glass glow hidden">
   <form id="recurring-form" onsubmit="saveRecurringBatch(event)">
-    <label class="field-label">Conta<select id="recurring-account" onchange="loadRecurringConfig()" required></select></label>
+    <label class="field-label">Conta<select id="recurring-account" required></select></label>
     <label class="field-label">Nome do lote<input id="recurring-name" value="Lote recorrente"></label>
 
     <div class="row">
@@ -118,6 +118,6 @@
 {% block scripts %}
 <script>
   initLoopPage();
-  setInterval(() => { loadLoopConfig(); loadRecurringConfig(); }, 10000);
+  setInterval(() => { refreshLoopStatus(); refreshRecurringStatus(); }, 10000);
 </script>
 {% endblock %}
