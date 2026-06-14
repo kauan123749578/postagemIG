@@ -16,13 +16,13 @@
 <div class="stats-grid" id="stats-grid"></div>
 
 <div class="grid-2">
-  <section class="card glass">
+  <section class="card glass glow">
     <h2>Publicações — últimos 7 dias</h2>
     <div class="chart-wrap">
       <canvas id="posts-chart"></canvas>
     </div>
   </section>
-  <section class="card glass">
+  <section class="card glass glow">
     <h2>Agendamentos</h2>
     <div class="chart-wrap">
       <canvas id="schedule-chart"></canvas>
@@ -30,7 +30,7 @@
   </section>
 </div>
 
-<section class="card glass">
+<section class="card glass glow">
   <h2>Contas</h2>
   <div class="table-wrap">
     <table id="accounts-table">
@@ -51,7 +51,7 @@
   </div>
 </section>
 
-<section class="card glass">
+<section class="card glass glow">
   <h2>Publicações e erros recentes</h2>
   <div id="recent-posts"></div>
 </section>
@@ -60,6 +60,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
   initDashboard();
-  setInterval(loadDashboard, 15000);
+  setInterval(loadDashboard, 8000);
 </script>
 {% endblock %}

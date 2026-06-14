@@ -187,7 +187,6 @@ class PostStoryRequest(BaseModel):
 
 
 class AppSettingsUpdate(BaseModel):
-    max_accounts: int = Field(ge=1, le=1000)
     default_max_posts_per_day: int = Field(ge=1, le=500)
     default_max_posts_per_hour: int = Field(ge=1, le=100)
     default_loop_batch_size: int = Field(ge=1, le=50)
@@ -437,7 +436,6 @@ def get_settings(db: Session = Depends(get_db)):
 
 @app.put("/api/settings")
 def update_settings(body: AppSettingsUpdate, db: Session = Depends(get_db)):
-    app_settings.set_setting(db, "max_accounts", str(body.max_accounts))
     app_settings.set_setting(db, "default_max_posts_per_day", str(body.default_max_posts_per_day))
     app_settings.set_setting(db, "default_max_posts_per_hour", str(body.default_max_posts_per_hour))
     app_settings.set_setting(db, "default_loop_batch_size", str(body.default_loop_batch_size))
@@ -824,7 +822,6 @@ def dashboard_data(db: Session = Depends(get_db)):
 
     return {
         "total_accounts": len(accounts),
-        "max_accounts": int(settings["max_accounts"]),
         "total_posts": total_posts,
         "total_errors": errors,
         "running_loops": running_loops,

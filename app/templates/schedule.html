@@ -4,68 +4,72 @@
 <div class="page-header">
   <div>
     <h1>Agendamentos</h1>
-    <p class="subtitle">Programe vídeos individuais ou lotes com data, hora e conta de contingência</p>
+    <p class="subtitle">Envie os vídeos, o servidor gera a URL pública e agenda os Reels automaticamente</p>
   </div>
   <button class="btn primary" onclick="loadScheduleList()">Atualizar</button>
 </div>
 
 <div class="stats-grid" id="schedule-stats"></div>
 
-<div class="grid-2">
-  <section class="card glass">
-    <h2>Novo agendamento</h2>
+<div class="grid-2 schedule-layout">
+  <section class="card glass glow">
+    <h2>Novo lote de Reels</h2>
     <form id="schedule-form" onsubmit="submitSchedule(event)">
       <label class="field-label">Nome do lote<input id="sch-name" required placeholder="Ex: Semana 1 — Reels"></label>
-      <label class="field-label">Conta principal
-        <select id="sch-account" required></select>
-      </label>
-      <label class="field-label">Conta de contingência
-        <select id="sch-fallback">
-          <option value="">Nenhuma</option>
-        </select>
-        <span class="hint">Se a principal cair, a contingência assume automaticamente</span>
-      </label>
-
-      <div class="tabs">
-        <button type="button" class="tab active" data-mode="batch" onclick="setScheduleMode('batch')">Lote com intervalo</button>
-        <button type="button" class="tab" data-mode="custom" onclick="setScheduleMode('custom')">Horários personalizados</button>
+      <div class="row">
+        <label class="field-label">Conta principal
+          <select id="sch-account" required></select>
+        </label>
+        <label class="field-label">Conta de contingência
+          <select id="sch-fallback">
+            <option value="">Nenhuma</option>
+          </select>
+        </label>
       </div>
 
-      <div id="mode-batch">
+      <div id="sch-dropzone" class="dropzone dropzone-lg">
+        <input type="file" id="sch-file-input" accept="video/*" multiple hidden>
+        <div class="dropzone-icon">🎬</div>
+        <p><strong>Arraste vídeos aqui</strong> ou clique para selecionar</p>
+        <p class="hint">Upload automático → URL pública → agendamento em lote</p>
+      </div>
+
+      <div id="sch-upload-progress" class="hidden batch-queue">
+        <div class="progress-bar"><div class="progress-fill" id="sch-progress-fill"></div></div>
+        <p id="sch-progress-text" class="hint">Enviando...</p>
+      </div>
+
+      <div class="row">
         <label class="field-label">Início do lote<input type="datetime-local" id="sch-start" required></label>
-        <label class="field-label">Intervalo entre vídeos (minutos)<input type="number" id="sch-interval" value="60" min="1" max="1440"></label>
-        <div class="caption-editor">
-          <div class="caption-header">
-            <label class="field-label no-margin">Legenda do lote</label>
-            <span class="caption-counter"><span id="sch-caption-count">0</span> / 2200</span>
-          </div>
-          <textarea id="sch-caption" class="caption-large" rows="4" maxlength="2200"></textarea>
-        </div>
-        <div id="sch-video-rows"></div>
-        <button type="button" class="btn secondary" onclick="addScheduleVideoRow()">+ Adicionar vídeo</button>
-        <div class="upload-mini" style="margin-top:12px">
-          <input type="file" id="sch-bulk-upload" accept="video/*" multiple hidden>
-          <button type="button" class="btn secondary" onclick="document.getElementById('sch-bulk-upload').click()">Upload em lote</button>
-        </div>
+        <label class="field-label">Intervalo (min)<input type="number" id="sch-interval" value="60" min="1" max="1440"></label>
       </div>
 
-      <div id="mode-custom" class="hidden">
-        <div id="sch-custom-rows"></div>
-        <button type="button" class="btn secondary" onclick="addCustomScheduleRow()">+ Horário personalizado</button>
+      <div class="caption-editor">
+        <div class="caption-header">
+          <label class="field-label no-margin">Legenda do lote (opcional)</label>
+          <span class="caption-counter"><span id="sch-caption-count">0</span> / 2200</span>
+        </div>
+        <textarea id="sch-caption" class="caption-large" rows="3" maxlength="2200" placeholder="Mesma legenda para todos os Reels do lote"></textarea>
       </div>
 
-      <div class="actions" style="margin-top:16px">
-        <button type="submit" class="btn primary">Agendar</button>
+      <h3 class="section-title">Preview do lote (<span id="sch-batch-count">0</span> vídeos)</h3>
+      <div id="sch-preview-grid" class="schedule-preview-grid">
+        <p class="hint">Nenhum vídeo — use o upload acima</p>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn primary" id="sch-submit-btn" disabled>Agendar lote</button>
+        <button type="button" class="btn secondary" onclick="clearScheduleBatch()">Limpar fila</button>
       </div>
     </form>
   </section>
 
-  <section class="card glass">
-    <h2>Próximos agendamentos</h2>
+  <section class="card glass glow schedule-panel-right">
+    <h2>Fila agendada</h2>
     <div class="chart-wrap" style="margin-bottom:16px">
       <canvas id="schedule-chart"></canvas>
     </div>
-    <div id="schedule-list"></div>
+    <div id="schedule-list" class="schedule-scroll"></div>
   </section>
 </div>
 {% endblock %}

@@ -88,7 +88,7 @@ async function loadDashboard() {
   if (!grid) return;
 
   grid.innerHTML = `
-    <div class="stat-card"><div class="value">${data.total_accounts}/${data.max_accounts}</div><div class="label">Contas</div></div>
+    <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Contas</div></div>
     <div class="stat-card"><div class="value">${data.total_posts}</div><div class="label">Posts publicados</div></div>
     <div class="stat-card"><div class="value">${data.total_errors}</div><div class="label">Erros</div></div>
     <div class="stat-card"><div class="value">${data.running_loops}</div><div class="label">Loops ativos</div></div>
@@ -407,7 +407,7 @@ function resetAccountForm() {
   document.getElementById("account-id").value = "";
   document.getElementById("form-title").textContent = "Nova conta";
   document.getElementById("is_active").checked = true;
-  updateCaptionCount();
+  populateAccountSelects();
 }
 
 function editAccount(id) {
@@ -422,11 +422,9 @@ function editAccount(id) {
   document.getElementById("username").value = a.username || "";
   document.getElementById("max_posts_per_day").value = a.max_posts_per_day;
   document.getElementById("max_posts_per_hour").value = a.max_posts_per_hour;
-  document.getElementById("default_caption").value = a.default_caption || "";
   document.getElementById("is_active").checked = a.is_active;
   populateAccountSelects();
   document.getElementById("fallback_account_id").value = a.fallback_account_id || "";
-  updateCaptionCount();
 }
 
 async function saveAccount(e) {
@@ -440,7 +438,6 @@ async function saveAccount(e) {
     username: document.getElementById("username").value,
     max_posts_per_day: +document.getElementById("max_posts_per_day").value,
     max_posts_per_hour: +document.getElementById("max_posts_per_hour").value,
-    default_caption: document.getElementById("default_caption").value,
     is_active: document.getElementById("is_active").checked,
     fallback_account_id: document.getElementById("fallback_account_id").value
       ? +document.getElementById("fallback_account_id").value
@@ -476,16 +473,8 @@ async function checkHealth(id) {
   loadAccounts();
 }
 
-function updateCaptionCount() {
-  const el = document.getElementById("default_caption");
-  const count = document.getElementById("caption-count");
-  if (el && count) count.textContent = el.value.length;
-}
-
 function initAccountsPage() {
   loadAccounts();
-  const cap = document.getElementById("default_caption");
-  if (cap) cap.addEventListener("input", updateCaptionCount);
 }
 
 // --- Publish ---
@@ -732,133 +721,123 @@ async function initLoopPage() {
 
 // --- Schedule ---
 
-let scheduleMode = "batch";
 let scheduleListChart = null;
-let schVideoCounter = 0;
-let schCustomCounter = 0;
+let scheduleBatch = [];
 
-function setScheduleMode(mode) {
-  scheduleMode = mode;
-  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
-  document.getElementById("mode-batch")?.classList.toggle("hidden", mode !== "batch");
-  document.getElementById("mode-custom")?.classList.toggle("hidden", mode !== "custom");
+function getScheduleStartDate() {
+  const val = document.getElementById("sch-start")?.value;
+  if (!val) return new Date();
+  return new Date(val);
 }
 
-function addScheduleVideoRow(video = {}) {
-  const container = document.getElementById("sch-video-rows");
-  if (!container) return;
-  const id = ++schVideoCounter;
-  const row = document.createElement("div");
-  row.className = "video-row";
-  row.innerHTML = `
-    <div class="video-row-header">
-      <strong>Vídeo</strong>
-      <button type="button" class="btn danger" onclick="this.closest('.video-row').remove()">Remover</button>
-    </div>
-    <label class="field-label">URL do vídeo<input class="sch-video-url" value="${video.video_url || ""}"></label>
-    <label class="field-label">URL da capa<input class="sch-cover-url" value="${video.cover_url || ""}"></label>
-    <div class="upload-mini">
-      <input type="file" class="sch-video-file" accept="video/*" hidden id="svf-${id}">
-      <input type="file" class="sch-cover-file" accept="image/*" hidden id="scf-${id}">
-      <button type="button" class="btn secondary" onclick="document.getElementById('svf-${id}').click()">Upload vídeo</button>
-      <button type="button" class="btn secondary" onclick="document.getElementById('scf-${id}').click()">Upload capa</button>
-    </div>
-  `;
-  container.appendChild(row);
-
-  row.querySelector(".sch-video-file").addEventListener("change", async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    toast("Enviando vídeo...");
-    const uploaded = await uploadFile("/api/upload/video", file);
-    row.querySelector(".sch-video-url").value = uploaded.url;
-    toast("Vídeo adicionado");
-  });
-
-  row.querySelector(".sch-cover-file").addEventListener("change", async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const uploaded = await uploadFile("/api/upload/image", file);
-    row.querySelector(".sch-cover-url").value = uploaded.url;
-    toast("Capa adicionada");
-  });
+function computeScheduledTime(index) {
+  const start = getScheduleStartDate();
+  const interval = +(document.getElementById("sch-interval")?.value || 60);
+  return new Date(start.getTime() + interval * index * 60000);
 }
 
-function addCustomScheduleRow(item = {}) {
-  const container = document.getElementById("sch-custom-rows");
-  if (!container) return;
-  const id = ++schCustomCounter;
-  const row = document.createElement("div");
-  row.className = "video-row";
-  row.innerHTML = `
-    <div class="video-row-header">
-      <strong>Item agendado</strong>
-      <button type="button" class="btn danger" onclick="this.closest('.video-row').remove()">Remover</button>
-    </div>
-    <label class="field-label">Data/hora<input type="datetime-local" class="sch-custom-at" value="${item.scheduled_at || ""}" required></label>
-    <label class="field-label">URL do vídeo<input class="sch-custom-video" value="${item.video_url || ""}"></label>
-    <label class="field-label">URL da capa<input class="sch-custom-cover" value="${item.cover_url || ""}"></label>
-    <label class="field-label">Legenda<textarea class="sch-custom-caption" rows="2">${item.caption || ""}</textarea></label>
-    <div class="upload-mini">
-      <input type="file" class="sch-custom-video-file" accept="video/*" hidden id="cvf-${id}">
-      <button type="button" class="btn secondary" onclick="document.getElementById('cvf-${id}').click()">Upload vídeo</button>
-    </div>
-  `;
-  container.appendChild(row);
+function renderSchedulePreview() {
+  const grid = document.getElementById("sch-preview-grid");
+  const countEl = document.getElementById("sch-batch-count");
+  const submitBtn = document.getElementById("sch-submit-btn");
+  if (!grid) return;
 
-  row.querySelector(".sch-custom-video-file").addEventListener("change", async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const uploaded = await uploadFile("/api/upload/video", file);
-    row.querySelector(".sch-custom-video").value = uploaded.url;
-    toast("Vídeo adicionado");
-  });
+  if (countEl) countEl.textContent = scheduleBatch.length;
+  if (submitBtn) submitBtn.disabled = !scheduleBatch.length;
+
+  if (!scheduleBatch.length) {
+    grid.innerHTML = "<p class='hint'>Nenhum vídeo — arraste arquivos no upload acima</p>";
+    return;
+  }
+
+  grid.innerHTML = scheduleBatch.map((item, i) => `
+    <div class="preview-card">
+      <video src="${item.video_url}" muted preload="metadata"></video>
+      <div class="preview-card-body">
+        <div class="name" title="${item.name}">${item.name}</div>
+        <div class="time">${formatDateTime(computeScheduledTime(i).toISOString())}</div>
+        <button type="button" class="btn ghost" style="margin-top:6px;width:100%;padding:4px;font-size:0.7rem" onclick="removeScheduleBatchItem(${i})">Remover</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function removeScheduleBatchItem(index) {
+  scheduleBatch.splice(index, 1);
+  renderSchedulePreview();
+}
+
+function clearScheduleBatch() {
+  scheduleBatch = [];
+  renderSchedulePreview();
+}
+
+async function uploadVideosToBatch(files) {
+  const videos = [...files].filter(f =>
+    f.type.startsWith("video/") || /\.(mp4|mov|webm|avi|m4v)$/i.test(f.name)
+  );
+  if (!videos.length) return toast("Nenhum vídeo válido", "error");
+
+  const progress = document.getElementById("sch-upload-progress");
+  const fill = document.getElementById("sch-progress-fill");
+  const text = document.getElementById("sch-progress-text");
+  if (progress) progress.classList.remove("hidden");
+
+  let ok = 0;
+  for (let i = 0; i < videos.length; i++) {
+    const file = videos[i];
+    const pct = Math.round((i / videos.length) * 100);
+    if (fill) fill.style.width = pct + "%";
+    if (text) text.textContent = `Enviando ${i + 1}/${videos.length}: ${file.name}`;
+
+    try {
+      const uploaded = await uploadFile("/api/upload/video", file);
+      scheduleBatch.push({
+        video_url: uploaded.url,
+        cover_url: "",
+        name: file.name,
+      });
+      ok++;
+      renderSchedulePreview();
+    } catch { /* continue */ }
+  }
+
+  if (fill) fill.style.width = "100%";
+  if (text) text.textContent = `Concluído: ${ok}/${videos.length} vídeos prontos para agendar`;
+  toast(`${ok} vídeo(s) enviado(s) — URLs geradas automaticamente`);
+
+  setTimeout(() => {
+    if (progress) progress.classList.add("hidden");
+    if (fill) fill.style.width = "0%";
+  }, 2500);
 }
 
 function toIsoLocal(dtLocal) {
   if (!dtLocal) return "";
-  const d = new Date(dtLocal);
-  return d.toISOString();
+  return new Date(dtLocal).toISOString();
 }
 
 async function submitSchedule(e) {
   e.preventDefault();
+  if (!scheduleBatch.length) return toast("Envie pelo menos 1 vídeo", "error");
+
   const accountId = +document.getElementById("sch-account").value;
   const fallbackVal = document.getElementById("sch-fallback").value;
   const body = {
     name: document.getElementById("sch-name").value,
     account_id: accountId,
     fallback_account_id: fallbackVal ? +fallbackVal : null,
+    start_at: toIsoLocal(document.getElementById("sch-start").value),
+    interval_minutes: +document.getElementById("sch-interval").value,
+    caption: document.getElementById("sch-caption").value,
+    videos: scheduleBatch.map(v => ({ video_url: v.video_url, cover_url: v.cover_url || "" })),
   };
-
-  if (scheduleMode === "batch") {
-    const videos = [...document.querySelectorAll("#sch-video-rows .video-row")].map(row => ({
-      video_url: row.querySelector(".sch-video-url").value.trim(),
-      cover_url: row.querySelector(".sch-cover-url").value.trim(),
-    })).filter(v => v.video_url);
-    if (!videos.length) return toast("Adicione pelo menos 1 vídeo", "error");
-    body.start_at = toIsoLocal(document.getElementById("sch-start").value);
-    body.interval_minutes = +document.getElementById("sch-interval").value;
-    body.caption = document.getElementById("sch-caption").value;
-    body.videos = videos;
-  } else {
-    const items = [...document.querySelectorAll("#sch-custom-rows .video-row")].map(row => ({
-      scheduled_at: toIsoLocal(row.querySelector(".sch-custom-at").value),
-      video_url: row.querySelector(".sch-custom-video").value.trim(),
-      cover_url: row.querySelector(".sch-custom-cover").value.trim(),
-      caption: row.querySelector(".sch-custom-caption").value,
-    })).filter(i => i.video_url && i.scheduled_at);
-    if (!items.length) return toast("Adicione itens com horário e vídeo", "error");
-    body.items = items;
-  }
 
   try {
     const res = await api("/api/schedule/batch", { method: "POST", body: JSON.stringify(body) });
-    toast(`${res.created} vídeo(s) agendado(s)`);
-    document.getElementById("schedule-form").reset();
-    document.getElementById("sch-video-rows").innerHTML = "";
-    document.getElementById("sch-custom-rows").innerHTML = "";
-    addScheduleVideoRow();
+    toast(`${res.created} Reel(s) agendado(s) com sucesso`);
+    scheduleBatch = [];
+    renderSchedulePreview();
     loadScheduleList();
   } catch (err) {
     toast(err.message, "error");
@@ -928,52 +907,54 @@ async function loadScheduleList() {
           ${i.status === "pending" || i.status === "error" ? `<div style="margin-top:8px"><button class="btn ghost" style="font-size:0.75rem" onclick="cancelSchedule(${i.id})">Cancelar</button></div>` : ""}
         </div>
       </div>
-    `).join("") : "<p class='hint'>Nenhum agendamento ainda</p>";
+    `).join("") : "<p class='hint'>Nenhum agendamento ainda — envie vídeos e clique em Agendar lote</p>";
   }
 }
 
 async function initSchedulePage() {
   await loadAccounts();
   populateAccountSelects();
-  addScheduleVideoRow();
-  addCustomScheduleRow();
 
   const cap = document.getElementById("sch-caption");
   const counter = document.getElementById("sch-caption-count");
   if (cap && counter) cap.addEventListener("input", () => { counter.textContent = cap.value.length; });
-
-  const bulk = document.getElementById("sch-bulk-upload");
-  if (bulk) {
-    bulk.addEventListener("change", async () => {
-      const files = [...bulk.files];
-      toast(`Enviando ${files.length} vídeo(s)...`);
-      for (const file of files) {
-        try {
-          const uploaded = await uploadFile("/api/upload/video", file);
-          addScheduleVideoRow({ video_url: uploaded.url });
-        } catch { /* continue */ }
-      }
-      bulk.value = "";
-      toast("Upload concluído");
-    });
-  }
 
   const start = document.getElementById("sch-start");
   if (start) {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
     start.value = now.toISOString().slice(0, 16);
+    start.addEventListener("change", renderSchedulePreview);
   }
 
+  document.getElementById("sch-interval")?.addEventListener("input", renderSchedulePreview);
+
+  const dropzone = document.getElementById("sch-dropzone");
+  const fileInput = document.getElementById("sch-file-input");
+  if (dropzone && fileInput) {
+    dropzone.addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("dragover"); });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", e => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      uploadVideosToBatch([...e.dataTransfer.files]);
+    });
+    fileInput.addEventListener("change", () => {
+      uploadVideosToBatch([...fileInput.files]);
+      fileInput.value = "";
+    });
+  }
+
+  renderSchedulePreview();
   loadScheduleList();
-  setInterval(loadScheduleList, 20000);
+  setInterval(loadScheduleList, 15000);
 }
 
 // --- Settings ---
 
 async function initSettingsPage() {
   const data = await api("/api/settings");
-  document.getElementById("max_accounts").value = data.max_accounts;
   document.getElementById("default_max_posts_per_day").value = data.default_max_posts_per_day;
   document.getElementById("default_max_posts_per_hour").value = data.default_max_posts_per_hour;
   document.getElementById("default_loop_batch_size").value = data.default_loop_batch_size;
@@ -1047,7 +1028,6 @@ async function saveSettings(e) {
     await api("/api/settings", {
       method: "PUT",
       body: JSON.stringify({
-        max_accounts: +document.getElementById("max_accounts").value,
         default_max_posts_per_day: +document.getElementById("default_max_posts_per_day").value,
         default_max_posts_per_hour: +document.getElementById("default_max_posts_per_hour").value,
         default_loop_batch_size: +document.getElementById("default_loop_batch_size").value,

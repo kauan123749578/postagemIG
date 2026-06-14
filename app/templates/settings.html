@@ -4,7 +4,7 @@
 <div class="page-header">
   <div>
     <h1>Configurações</h1>
-    <p class="subtitle">Limites globais do painel e padrões para novas contas</p>
+    <p class="subtitle">Padrões globais do painel — contas ilimitadas</p>
   </div>
 </div>
 
@@ -13,9 +13,8 @@
   <p>A API oficial permite aproximadamente <strong>100 publicações por 24 horas</strong> por conta Instagram. Os campos abaixo são apenas controle interno do sistema.</p>
 </div>
 
-<section class="card glass">
+<section class="card glass glow">
   <form id="settings-form" onsubmit="saveSettings(event)">
-    <label class="field-label">Limite máximo de contas<input type="number" id="max_accounts" min="1" max="1000" required></label>
     <div class="row">
       <label class="field-label">Padrão posts/dia<input type="number" id="default_max_posts_per_day" min="1" max="500" required></label>
       <label class="field-label">Padrão posts/hora<input type="number" id="default_max_posts_per_hour" min="1" max="100" required></label>
@@ -24,7 +23,7 @@
       <label class="field-label">Padrão tamanho do lote<input type="number" id="default_loop_batch_size" min="1" max="50" required></label>
       <label class="field-label">Padrão intervalo (seg)<input type="number" id="default_loop_interval_seconds" min="0" max="3600" required></label>
     </div>
-    <p class="hint">Contas atuais: <strong id="current-accounts">0</strong></p>
+    <p class="hint">Contas cadastradas: <strong id="current-accounts">0</strong> (sem limite)</p>
     <button type="submit" class="btn primary">Salvar configurações</button>
   </form>
 </section>
