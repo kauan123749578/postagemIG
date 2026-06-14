@@ -98,13 +98,18 @@ async function loadDashboard() {
 
   const storageBanner = document.getElementById("storage-banner");
   if (storageBanner && data.storage) {
-    if (data.storage.persistent_volume && data.storage.writable) {
+    const s = data.storage;
+    if (s.database_type === "postgresql" && s.database_connected) {
       storageBanner.className = "notice notice-info";
-      storageBanner.innerHTML = `<strong>Armazenamento persistente:</strong> volume ativo em <code>${data.storage.data_dir}</code> — contas, vídeos e banco são mantidos nos redeploys.`;
+      storageBanner.innerHTML = `<strong>PostgreSQL conectado</strong> (${s.database_host || "Railway"}) — contas, agendamentos e logs persistem no banco.${s.persistent_volume ? ` Vídeos em <code>${s.data_dir}</code>.` : " <strong>Monte volume /data</strong> no serviço postagemIG para não perder vídeos."}`;
+      storageBanner.classList.remove("hidden");
+    } else if (s.persistent_volume && s.writable && s.database_ok) {
+      storageBanner.className = "notice notice-info";
+      storageBanner.innerHTML = `<strong>Armazenamento persistente:</strong> volume ativo em <code>${s.data_dir}</code> — dados mantidos nos redeploys.`;
       storageBanner.classList.remove("hidden");
     } else {
       storageBanner.className = "notice notice-warning";
-      storageBanner.innerHTML = `<strong>Atenção — dados podem ser perdidos!</strong> Monte um volume Railway em <code>/data</code> e defina <code>DATA_DIR=/data</code>. Sem isso, contas e vídeos somem a cada atualização.`;
+      storageBanner.innerHTML = `<strong>Atenção:</strong> ${s.warning || "Configure Postgres (DATABASE_URL) e volume /data na Railway."}`;
       storageBanner.classList.remove("hidden");
     }
   }

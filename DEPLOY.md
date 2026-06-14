@@ -37,21 +37,32 @@ A variável `RAILWAY_PUBLIC_DOMAIN` é injetada automaticamente — o app usa el
 
 ---
 
-## 4. Volume persistente (obrigatório)
+## 4. PostgreSQL (recomendado — banco persistente)
 
-Sem volume, vídeos e banco somem a cada redeploy.
+1. No projeto Railway → **+ New** → **Database** → **PostgreSQL**
+2. Abra o serviço **postagemIG** → aba **Variables**
+3. **Add Reference** → selecione o Postgres → marque **`DATABASE_URL`**
+4. Redeploy o postagemIG
 
-1. No projeto Railway → **+ New** → **Volume**
-2. Conecte ao serviço do app
-3. **Mount path:** `/data`
+O app detecta `DATABASE_URL` automaticamente e usa PostgreSQL em vez de SQLite.
+Contas, tokens, agendamentos, loops e logs ficam no Postgres — **não somem no redeploy**.
+
+---
+
+## 5. Volume persistente para vídeos (obrigatório)
+
+O Postgres guarda só o banco. **Vídeos** precisam de volume no serviço postagemIG:
+
+1. **+ New** → **Volume** → conecte ao serviço **postagemIG**
+2. **Mount path:** `/data`
+3. Variável: `DATA_DIR=/data`
 
 Isso persiste:
-- Banco SQLite (`/data/db/`)
 - Vídeos uploadados (`/data/uploads/`)
 
 ---
 
-## 5. Variáveis de ambiente
+## 6. Variáveis de ambiente
 
 Na aba **Variables** do serviço, adicione:
 
@@ -61,6 +72,7 @@ Na aba **Variables** do serviço, adicione:
 | `ADMIN_USERNAME` | `admin` |
 | `ADMIN_PASSWORD` | Senha forte (mín. 12 caracteres) |
 | `DATA_DIR` | `/data` |
+| `DATABASE_URL` | Referência automática do serviço Postgres |
 | `ENV` | `production` |
 
 Opcional (se quiser forçar URL manualmente):
@@ -71,7 +83,7 @@ Opcional (se quiser forçar URL manualmente):
 
 ---
 
-## 6. Deploy e teste
+## 7. Deploy e teste
 
 Após o deploy:
 
@@ -91,7 +103,8 @@ https://seu-app.up.railway.app/media/videos/arquivo.mp4
 ## Checklist pós-deploy
 
 - [ ] Domínio público gerado
-- [ ] Volume montado em `/data`
+- [ ] Postgres criado e `DATABASE_URL` referenciado no postagemIG
+- [ ] Volume montado em `/data` (vídeos)
 - [ ] `SECRET_KEY` e `ADMIN_PASSWORD` configurados
 - [ ] Login no painel funciona
 - [ ] Conta Instagram cadastrada
@@ -106,7 +119,8 @@ https://seu-app.up.railway.app/media/videos/arquivo.mp4
 |------|---------|
 | Erro 2207076 | URL do vídeo inacessível — confirme domínio público e volume |
 | 401 no login | Verifique `ADMIN_PASSWORD` nas variáveis Railway |
-| Vídeos sumiram | Volume não montado em `/data` |
+| Vídeos sumiram | Volume `/data` no serviço postagemIG |
+| Contas sumiram | Vincule `DATABASE_URL` do Postgres ao postagemIG |
 | Token inválido | Gere novo token no Meta Developers |
 
 ---
