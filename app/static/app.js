@@ -43,6 +43,14 @@ function setupDropzone(zoneId, inputId, onFiles) {
   const input = document.getElementById(inputId);
   if (!zone || !input) return;
 
+  zone.style.position = "relative";
+  zone.style.cursor = "pointer";
+
+  zone.addEventListener("click", (e) => {
+    if (e.target === input) return;
+    input.click();
+  });
+
   zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
   zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
   zone.addEventListener("drop", e => {
@@ -50,7 +58,11 @@ function setupDropzone(zoneId, inputId, onFiles) {
     zone.classList.remove("dragover");
     onFiles([...e.dataTransfer.files]);
   });
-  input.addEventListener("change", () => onFiles([...input.files]));
+
+  input.addEventListener("change", () => {
+    if (input.files?.length) onFiles([...input.files]);
+    input.value = "";
+  });
 }
 
 // --- Dashboard ---
@@ -1153,22 +1165,7 @@ async function initSchedulePage() {
 
   document.getElementById("sch-interval")?.addEventListener("input", renderSchedulePreview);
 
-  const dropzone = document.getElementById("sch-dropzone");
-  const fileInput = document.getElementById("sch-file-input");
-  if (dropzone && fileInput) {
-    dropzone.addEventListener("click", () => fileInput.click());
-    dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("dragover"); });
-    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
-    dropzone.addEventListener("drop", e => {
-      e.preventDefault();
-      dropzone.classList.remove("dragover");
-      uploadVideosToBatch([...e.dataTransfer.files]);
-    });
-    fileInput.addEventListener("change", () => {
-      uploadVideosToBatch([...fileInput.files]);
-      fileInput.value = "";
-    });
-  }
+  setupDropzone("sch-dropzone", "sch-file-input", uploadVideosToBatch);
 
   renderSchedulePreview();
   loadScheduleList();

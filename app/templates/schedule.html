@@ -21,7 +21,7 @@
       </label>
 
       <div id="sch-dropzone" class="dropzone dropzone-lg">
-        <input type="file" id="sch-file-input" accept="video/*" multiple hidden>
+        <input type="file" id="sch-file-input" accept="video/*" multiple>
         <div class="dropzone-icon">🎬</div>
         <p><strong>Arraste vídeos aqui</strong> ou clique para selecionar</p>
         <p class="hint">Upload automático → URL pública → agendamento em lote</p>
@@ -34,8 +34,8 @@
             <span class="hint">Nenhuma capa</span>
           </div>
           <div>
-            <input type="file" id="sch-cover-input" accept="image/*" hidden>
-            <button type="button" class="btn secondary" onclick="document.getElementById('sch-cover-input').click()">Upload capa</button>
+            <input type="file" id="sch-cover-input" accept="image/*" class="file-input-offscreen">
+            <label for="sch-cover-input" class="btn secondary" style="cursor:pointer">Upload capa</label>
             <input type="hidden" id="sch-cover-url">
             <p class="hint" style="margin-top:8px">JPEG/PNG — aparece como thumbnail do Reel na Meta</p>
           </div>

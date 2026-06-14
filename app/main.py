@@ -703,7 +703,7 @@ def get_loop(account_id: int, db: Session = Depends(get_db)):
     _get_account_or_404(db, account_id)
     loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
     if not loop:
-        return {"account_id": account_id, "videos": [], "caption": "", "batch_size": 4, "interval_seconds": 60, "batch_cover_url": "", "is_running": False}
+        return {"account_id": account_id, "videos": [], "caption": "", "batch_size": 4, "interval_seconds": 60, "batch_cover_url": "", "is_running": False, "current_index": 0, "batches_completed": 0, "total_posts": 0, "last_error": ""}
     return {
         "account_id": account_id,
         "videos": json.loads(loop.videos_json or "[]"),

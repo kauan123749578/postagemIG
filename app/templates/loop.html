@@ -35,16 +35,16 @@
       <div class="row cover-upload-row">
         <div class="cover-preview-wrap" id="loop-cover-preview"><span class="hint">Nenhuma capa</span></div>
         <div>
-          <input type="file" id="loop-cover-input" accept="image/*" hidden>
-          <button type="button" class="btn secondary" onclick="document.getElementById('loop-cover-input').click()">Upload capa</button>
+          <input type="file" id="loop-cover-input" accept="image/*" class="file-input-offscreen">
+          <label for="loop-cover-input" class="btn secondary" style="cursor:pointer">Upload capa</label>
           <input type="hidden" id="loop-cover-url">
         </div>
       </div>
     </div>
     <div class="dropzone dropzone-lg" id="loop-video-dropzone">
       <div class="dropzone-icon">🎬</div>
-      <p><strong>Arraste vídeos</strong> para adicionar ao loop</p>
-      <input type="file" id="loop-bulk-upload" accept="video/*" multiple hidden>
+      <p><strong>Arraste vídeos</strong> ou clique para selecionar</p>
+      <input type="file" id="loop-bulk-upload" accept="video/*" multiple>
     </div>
     <div id="video-items"></div>
 
@@ -93,16 +93,16 @@
       <div class="row cover-upload-row">
         <div class="cover-preview-wrap" id="recurring-cover-preview"><span class="hint">Nenhuma capa</span></div>
         <div>
-          <input type="file" id="recurring-cover-input" accept="image/*" hidden>
-          <button type="button" class="btn secondary" onclick="document.getElementById('recurring-cover-input').click()">Upload capa</button>
+          <input type="file" id="recurring-cover-input" accept="image/*" class="file-input-offscreen">
+          <label for="recurring-cover-input" class="btn secondary" style="cursor:pointer">Upload capa</label>
           <input type="hidden" id="recurring-cover-url">
         </div>
       </div>
     </div>
     <div class="dropzone dropzone-lg" id="recurring-dropzone">
       <div class="dropzone-icon">📦</div>
-      <p><strong>Arraste vídeos</strong> — upload automático para URL pública</p>
-      <input type="file" id="recurring-upload" accept="video/*" multiple hidden>
+      <p><strong>Arraste vídeos</strong> ou clique para selecionar</p>
+      <input type="file" id="recurring-upload" accept="video/*" multiple>
     </div>
     <div id="recurring-video-items"></div>
 
