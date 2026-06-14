@@ -4,7 +4,7 @@
 <div class="page-header">
   <div>
     <h1>Dashboard</h1>
-    <p class="subtitle">Monitoramento em tempo real — servidor na nuvem, loops ativos 24/7</p>
+    <p class="subtitle">Monitoramento em tempo real — servidor na nuvem, loops e agendamentos 24/7</p>
   </div>
   <button class="btn primary" onclick="refreshAllInsights()">Atualizar insights</button>
 </div>
@@ -14,6 +14,21 @@
 </div>
 
 <div class="stats-grid" id="stats-grid"></div>
+
+<div class="grid-2">
+  <section class="card glass">
+    <h2>Publicações — últimos 7 dias</h2>
+    <div class="chart-wrap">
+      <canvas id="posts-chart"></canvas>
+    </div>
+  </section>
+  <section class="card glass">
+    <h2>Agendamentos</h2>
+    <div class="chart-wrap">
+      <canvas id="schedule-chart"></canvas>
+    </div>
+  </section>
+</div>
 
 <section class="card glass">
   <h2>Contas</h2>
@@ -27,6 +42,7 @@
           <th>Alcance</th>
           <th>Posts 24h</th>
           <th>Loop</th>
+          <th>Contingência</th>
           <th>Proxy</th>
         </tr>
       </thead>
@@ -36,11 +52,12 @@
 </section>
 
 <section class="card glass">
-  <h2>Publicações recentes</h2>
+  <h2>Publicações e erros recentes</h2>
   <div id="recent-posts"></div>
 </section>
 {% endblock %}
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
   initDashboard();
   setInterval(loadDashboard, 15000);

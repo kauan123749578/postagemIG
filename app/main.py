@@ -1,7 +1,7 @@
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import APP_BASE_URL, IMAGES_DIR, VIDEOS_DIR
 from app.database import Base, SessionLocal, engine, get_db, migrate_schema
 from app.models import AdminUser
-from app.models import Account, LoopConfig, PostLog
+from app.models import Account, LoopConfig, PostLog, ScheduledBatch, ScheduledPost
 from app.services.auth import (
     SESSION_COOKIE,
     clear_session_cookie,
@@ -31,6 +31,8 @@ from app.services.auth import (
 from app.services.health import check_account_health, refresh_account_insights
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
 from app.services.loop_worker import start_loop_worker
+from app.services.publisher import publish_reel
+from app.services.schedule_worker import start_schedule_worker
 from app.services.media_storage import list_media, save_image, save_video
 from app.services.rate_limit import can_post, usage_stats
 from app.services import settings as app_settings
@@ -57,6 +59,7 @@ async def lifespan(_: FastAPI):
     finally:
         db.close()
     start_loop_worker()
+    start_schedule_worker()
     yield
 
 
@@ -117,6 +120,7 @@ class AccountCreate(BaseModel):
     max_posts_per_hour: int = Field(default=25, ge=1, le=100)
     default_caption: str = ""
     is_active: bool = True
+    fallback_account_id: int | None = None
 
 
 class AccountUpdate(BaseModel):
@@ -131,6 +135,7 @@ class AccountUpdate(BaseModel):
     max_posts_per_hour: int | None = Field(default=None, ge=1, le=100)
     default_caption: str | None = None
     is_active: bool | None = None
+    fallback_account_id: int | None = None
 
 
 class PostImageRequest(BaseModel):
@@ -189,6 +194,24 @@ class AppSettingsUpdate(BaseModel):
     default_loop_interval_seconds: int = Field(ge=0, le=3600)
 
 
+class ScheduleItemCreate(BaseModel):
+    video_url: str
+    cover_url: str = ""
+    caption: str = ""
+    scheduled_at: str
+
+
+class ScheduleBatchCreate(BaseModel):
+    name: str
+    account_id: int
+    fallback_account_id: int | None = None
+    items: list[ScheduleItemCreate] = []
+    start_at: str | None = None
+    interval_minutes: int = Field(default=60, ge=1, le=1440)
+    videos: list[LoopVideoItem] = []
+    caption: str = ""
+
+
 # --- Helpers ---
 
 def _account_dict(account: Account, db: Session) -> dict:
@@ -213,6 +236,7 @@ def _account_dict(account: Account, db: Session) -> dict:
         "loop_running": bool(loop and loop.is_running),
         "loop_posts": loop.total_posts if loop else 0,
         "loop_batches": loop.batches_completed if loop else 0,
+        "fallback_account_id": account.fallback_account_id,
     }
 
 
@@ -228,6 +252,38 @@ def _current_user(request: Request, db: Session = Depends(get_db)) -> AdminUser:
     if not user:
         raise HTTPException(401, "Não autenticado")
     return user
+
+
+def _parse_dt(value: str) -> datetime:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _schedule_dict(item: ScheduledPost, db: Session) -> dict:
+    account = db.get(Account, item.account_id)
+    posted = db.get(Account, item.posted_account_id) if item.posted_account_id else None
+    fallback = db.get(Account, item.fallback_account_id) if item.fallback_account_id else None
+    return {
+        "id": item.id,
+        "batch_id": item.batch_id,
+        "account_id": item.account_id,
+        "account_name": account.name if account else "",
+        "fallback_account_id": item.fallback_account_id,
+        "fallback_name": fallback.name if fallback else "",
+        "posted_account_name": posted.name if posted else "",
+        "video_url": item.video_url,
+        "cover_url": item.cover_url,
+        "caption": item.caption,
+        "media_type": item.media_type,
+        "scheduled_at": item.scheduled_at.isoformat() if item.scheduled_at else None,
+        "status": item.status,
+        "error_message": item.error_message,
+        "media_id": item.media_id,
+        "posted_at": item.posted_at.isoformat() if item.posted_at else None,
+        "sort_order": item.sort_order,
+    }
 
 
 def _enforce_post_limits(db: Session, account: Account) -> None:
@@ -274,6 +330,11 @@ def dashboard_page(request: Request):
 @app.get("/publish", response_class=HTMLResponse)
 def publish_page(request: Request):
     return templates.TemplateResponse(request, "publish.html", {"page": "publish"})
+
+
+@app.get("/schedule", response_class=HTMLResponse)
+def schedule_page(request: Request):
+    return templates.TemplateResponse(request, "schedule.html", {"page": "schedule"})
 
 
 @app.get("/accounts", response_class=HTMLResponse)
@@ -412,6 +473,7 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
         max_posts_per_hour=body.max_posts_per_hour or int(defaults["default_max_posts_per_hour"]),
         default_caption=body.default_caption[:INSTAGRAM_CAPTION_MAX],
         is_active=body.is_active,
+        fallback_account_id=body.fallback_account_id,
     )
     db.add(account)
     db.commit()
@@ -513,18 +575,13 @@ def post_reel(body: PostReelRequest, db: Session = Depends(get_db)):
     _enforce_post_limits(db, account)
     caption = body.caption or account.default_caption
     try:
-        media_id = client_from_account(account).post_reel(
-            body.video_url,
-            caption,
+        result = publish_reel(
+            db, account, body.video_url, caption,
             cover_url=body.cover_url or None,
             audio_name=body.audio_name or None,
         )
-        db.add(PostLog(account_id=account.id, media_id=media_id, media_type="reel", caption_preview=caption[:200], status="success"))
-        db.commit()
-        return {"media_id": media_id}
+        return result
     except InstagramAPIError as exc:
-        db.add(PostLog(account_id=account.id, media_type="reel", status="error", error_message=str(exc)))
-        db.commit()
         raise HTTPException(400, str(exc)) from exc
 
 
@@ -629,6 +686,104 @@ def stop_loop(account_id: int, db: Session = Depends(get_db)):
     return {"is_running": False}
 
 
+# --- API: Schedule ---
+
+@app.get("/api/schedule")
+def list_schedule(db: Session = Depends(get_db)):
+    items = db.query(ScheduledPost).order_by(ScheduledPost.scheduled_at.desc()).limit(200).all()
+    return [_schedule_dict(i, db) for i in items]
+
+
+@app.post("/api/schedule/batch", status_code=201)
+def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_db)):
+    _get_account_or_404(db, body.account_id)
+    if body.fallback_account_id:
+        _get_account_or_404(db, body.fallback_account_id)
+
+    batch = ScheduledBatch(
+        name=body.name,
+        account_id=body.account_id,
+        fallback_account_id=body.fallback_account_id,
+    )
+    db.add(batch)
+    db.flush()
+
+    created: list[ScheduledPost] = []
+
+    if body.items:
+        for idx, item in enumerate(body.items):
+            post = ScheduledPost(
+                batch_id=batch.id,
+                account_id=body.account_id,
+                fallback_account_id=body.fallback_account_id,
+                video_url=item.video_url,
+                cover_url=item.cover_url,
+                caption=(item.caption or body.caption)[:INSTAGRAM_CAPTION_MAX],
+                scheduled_at=_parse_dt(item.scheduled_at),
+                sort_order=idx,
+            )
+            db.add(post)
+            created.append(post)
+    elif body.videos and body.start_at:
+        start = _parse_dt(body.start_at)
+        for idx, video in enumerate(body.videos):
+            scheduled = start + timedelta(minutes=body.interval_minutes * idx)
+            post = ScheduledPost(
+                batch_id=batch.id,
+                account_id=body.account_id,
+                fallback_account_id=body.fallback_account_id,
+                video_url=video.video_url,
+                cover_url=video.cover_url,
+                caption=body.caption[:INSTAGRAM_CAPTION_MAX],
+                scheduled_at=scheduled,
+                sort_order=idx,
+            )
+            db.add(post)
+            created.append(post)
+    else:
+        raise HTTPException(400, "Informe items com horários ou videos + start_at")
+
+    db.commit()
+    return {"batch_id": batch.id, "created": len(created), "items": [_schedule_dict(p, db) for p in created]}
+
+
+@app.delete("/api/schedule/{item_id}")
+def cancel_schedule(item_id: int, db: Session = Depends(get_db)):
+    item = db.get(ScheduledPost, item_id)
+    if not item:
+        raise HTTPException(404, "Agendamento não encontrado")
+    if item.status not in ("pending", "error"):
+        raise HTTPException(400, "Só é possível cancelar pendentes ou com erro")
+    item.status = "cancelled"
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/recent-posts")
+def recent_posts(db: Session = Depends(get_db)):
+    logs = (
+        db.query(PostLog)
+        .order_by(PostLog.posted_at.desc())
+        .limit(50)
+        .all()
+    )
+    result = []
+    for log in logs:
+        acc = db.get(Account, log.account_id)
+        result.append({
+            "id": log.id,
+            "account": acc.name if acc else f"#{log.account_id}",
+            "username": acc.username if acc else "",
+            "media_type": log.media_type,
+            "status": log.status,
+            "error_message": log.error_message,
+            "caption_preview": log.caption_preview,
+            "media_id": log.media_id,
+            "posted_at": log.posted_at.isoformat() if log.posted_at else None,
+        })
+    return result
+
+
 # --- API: Dashboard ---
 
 @app.get("/api/dashboard")
@@ -637,7 +792,35 @@ def dashboard_data(db: Session = Depends(get_db)):
     total_posts = db.query(PostLog).filter(PostLog.status == "success").count()
     errors = db.query(PostLog).filter(PostLog.status == "error").count()
     running_loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
+    pending_schedule = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
     settings = app_settings.get_all_settings(db)
+
+    now = datetime.now(timezone.utc)
+    chart_days = []
+    chart_success = []
+    chart_errors = []
+    for i in range(6, -1, -1):
+        day = now - timedelta(days=i)
+        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        chart_days.append(day_start.strftime("%d/%m"))
+        chart_success.append(
+            db.query(PostLog)
+            .filter(PostLog.status == "success", PostLog.posted_at >= day_start, PostLog.posted_at < day_end)
+            .count()
+        )
+        chart_errors.append(
+            db.query(PostLog)
+            .filter(PostLog.status == "error", PostLog.posted_at >= day_start, PostLog.posted_at < day_end)
+            .count()
+        )
+
+    schedule_stats = {
+        "pending": db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count(),
+        "posted": db.query(ScheduledPost).filter(ScheduledPost.status == "posted").count(),
+        "error": db.query(ScheduledPost).filter(ScheduledPost.status == "error").count(),
+        "processing": db.query(ScheduledPost).filter(ScheduledPost.status == "processing").count(),
+    }
 
     return {
         "total_accounts": len(accounts),
@@ -645,6 +828,9 @@ def dashboard_data(db: Session = Depends(get_db)):
         "total_posts": total_posts,
         "total_errors": errors,
         "running_loops": running_loops,
+        "pending_schedule": pending_schedule,
         "app_base_url": APP_BASE_URL,
         "accounts": [_account_dict(a, db) for a in accounts],
+        "chart": {"labels": chart_days, "success": chart_success, "errors": chart_errors},
+        "schedule_stats": schedule_stats,
     }

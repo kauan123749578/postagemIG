@@ -40,6 +40,8 @@ class Account(Base):
     total_reach: Mapped[int] = mapped_column(Integer, default=0)
     total_impressions: Mapped[int] = mapped_column(Integer, default=0)
 
+    fallback_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -114,3 +116,41 @@ class LoopConfig(Base):
     last_error: Mapped[str] = mapped_column(Text, default="")
 
     account: Mapped["Account"] = relationship(back_populates="loop_config")
+
+
+class ScheduledBatch(Base):
+    __tablename__ = "scheduled_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120))
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    fallback_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    items: Mapped[list["ScheduledPost"]] = relationship(back_populates="batch")
+
+
+class ScheduledPost(Base):
+    __tablename__ = "scheduled_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("scheduled_batches.id"), nullable=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    fallback_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+
+    video_url: Mapped[str] = mapped_column(Text)
+    cover_url: Mapped[str] = mapped_column(Text, default="")
+    caption: Mapped[str] = mapped_column(Text, default="")
+    media_type: Mapped[str] = mapped_column(String(32), default="reel")
+
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    media_id: Mapped[str] = mapped_column(String(64), default="")
+    posted_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    batch: Mapped["ScheduledBatch | None"] = relationship(back_populates="items")

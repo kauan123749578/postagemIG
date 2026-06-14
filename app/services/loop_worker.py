@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import joinedload
 
 from app.database import SessionLocal
-from app.models import LoopConfig, PostLog
-from app.services.health import check_account_health
-from app.services.instagram import InstagramAPIError, client_from_account
+from app.models import LoopConfig
+from app.services.instagram import InstagramAPIError
+from app.services.publisher import publish_reel
 from app.services.rate_limit import can_post
 
 logger = logging.getLogger("loop_worker")
@@ -78,10 +78,11 @@ def _process_single_loop(loop_id: int) -> None:
         cover_url = item.get("cover_url") or None
         caption = _caption_for_loop(loop, account)
 
-        client = client_from_account(account)
         try:
-            media_id = client.post_reel(video_url, caption, cover_url=cover_url)
-            loop.last_error = ""
+            result = publish_reel(db, account, video_url, caption, cover_url=cover_url)
+            media_id = result["media_id"]
+            used = result.get("used_fallback")
+            loop.last_error = "Contingência usada" if used else ""
             loop.total_posts += 1
             loop.last_post_at = _utcnow()
             loop.current_index = (index + 1) % len(videos)
@@ -89,34 +90,16 @@ def _process_single_loop(loop_id: int) -> None:
             if loop.current_index % loop.batch_size == 0:
                 loop.batches_completed += 1
 
-            db.add(
-                PostLog(
-                    account_id=account.id,
-                    media_id=media_id,
-                    media_type="reel",
-                    caption_preview=(caption or "")[:200],
-                    status="success",
-                )
-            )
             logger.info(
-                "Loop conta %s: post %s (lote %s, índice %s)",
+                "Loop conta %s: post %s (lote %s, índice %s%s)",
                 account.name,
                 media_id,
                 loop.batches_completed,
                 index,
+                ", contingência" if used else "",
             )
         except InstagramAPIError as exc:
             loop.last_error = str(exc)
-            db.add(
-                PostLog(
-                    account_id=account.id,
-                    media_type="reel",
-                    caption_preview=(caption or "")[:200],
-                    status="error",
-                    error_message=str(exc),
-                )
-            )
-            check_account_health(db, account)
 
         db.commit()
     except Exception as exc:

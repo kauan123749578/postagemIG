@@ -55,6 +55,33 @@ function setupDropzone(zoneId, inputId, onFiles) {
 
 // --- Dashboard ---
 
+let postsChart = null;
+let dashScheduleChart = null;
+
+function scheduleStatusLabel(status) {
+  const map = {
+    pending: "Pendente",
+    processing: "Publicando",
+    posted: "Publicado",
+    error: "Erro",
+    cancelled: "Cancelado",
+  };
+  return map[status] || status;
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function renderChart(canvasId, config, chartRef) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || typeof Chart === "undefined") return chartRef;
+  if (chartRef) chartRef.destroy();
+  return new Chart(canvas, config);
+}
+
 async function loadDashboard() {
   const data = await api("/api/dashboard");
   const grid = document.getElementById("stats-grid");
@@ -65,11 +92,63 @@ async function loadDashboard() {
     <div class="stat-card"><div class="value">${data.total_posts}</div><div class="label">Posts publicados</div></div>
     <div class="stat-card"><div class="value">${data.total_errors}</div><div class="label">Erros</div></div>
     <div class="stat-card"><div class="value">${data.running_loops}</div><div class="label">Loops ativos</div></div>
+    <div class="stat-card"><div class="value">${data.pending_schedule || 0}</div><div class="label">Agendados</div></div>
   `;
+
+  postsChart = renderChart("posts-chart", {
+    type: "bar",
+    data: {
+      labels: data.chart?.labels || [],
+      datasets: [
+        {
+          label: "Sucesso",
+          data: data.chart?.success || [],
+          backgroundColor: "rgba(34,197,94,0.7)",
+          borderRadius: 6,
+        },
+        {
+          label: "Erros",
+          data: data.chart?.errors || [],
+          backgroundColor: "rgba(239,68,68,0.7)",
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: "#cbd5e1" } } },
+      scales: {
+        x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } },
+        y: { beginAtZero: true, ticks: { color: "#94a3b8", precision: 0 }, grid: { color: "rgba(255,255,255,0.05)" } },
+      },
+    },
+  }, postsChart);
+
+  const ss = data.schedule_stats || {};
+  dashScheduleChart = renderChart("schedule-chart", {
+    type: "doughnut",
+    data: {
+      labels: ["Pendentes", "Publicados", "Erros", "Processando"],
+      datasets: [{
+        data: [ss.pending || 0, ss.posted || 0, ss.error || 0, ss.processing || 0],
+        backgroundColor: ["#60a5fa", "#4ade80", "#f87171", "#fbbf24"],
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom", labels: { color: "#cbd5e1" } } },
+    },
+  }, dashScheduleChart);
 
   const tbody = document.querySelector("#accounts-table tbody");
   if (tbody) {
-    tbody.innerHTML = data.accounts.map(a => `
+    tbody.innerHTML = data.accounts.map(a => {
+      const fallback = a.fallback_account_id
+        ? data.accounts.find(x => x.id === a.fallback_account_id)?.name || `#${a.fallback_account_id}`
+        : "—";
+      return `
       <tr>
         <td><strong>${a.name}</strong><br><span class="hint">@${a.username || "—"}</span></td>
         <td>${healthBadge(a.health_status)}</td>
@@ -77,27 +156,26 @@ async function loadDashboard() {
         <td>${a.total_reach.toLocaleString()}</td>
         <td>${a.usage.posts_last_24h}/${a.max_posts_per_day}</td>
         <td>${a.loop_running ? '<span class="badge running">Ativo</span>' : "Parado"} (${a.loop_posts})</td>
+        <td>${fallback}</td>
         <td>${a.proxy_url ? "✓" : "—"}</td>
       </tr>
-    `).join("");
+    `}).join("");
   }
 
   const recent = document.getElementById("recent-posts");
-  if (recent && data.accounts.length) {
-    const posts = [];
-    for (const acc of data.accounts.slice(0, 5)) {
-      const logs = await api(`/api/accounts/${acc.id}/posts`);
-      logs.slice(0, 3).forEach(p => posts.push({ ...p, account: acc.name }));
-    }
-    posts.sort((a, b) => (b.posted_at || "").localeCompare(a.posted_at || ""));
-    recent.innerHTML = posts.slice(0, 15).map(p => `
-      <div class="account-item">
-        <div><strong>${p.account}</strong> — ${p.media_type}
-          <div class="meta">${p.posted_at || ""} | ${p.status}</div>
+  if (recent) {
+    const posts = await api("/api/recent-posts");
+    recent.innerHTML = posts.length ? posts.map(p => `
+      <div class="post-log-item">
+        <div>
+          <strong>${p.account}</strong> @${p.username || "—"} — ${p.media_type}
+          <div class="meta">${formatDateTime(p.posted_at)}</div>
+          ${p.caption_preview ? `<div class="meta">${p.caption_preview}</div>` : ""}
+          ${p.status === "error" && p.error_message ? `<div class="error-detail">${p.error_message}</div>` : ""}
         </div>
-        <span class="badge ${p.status === "success" ? "healthy" : "error"}">${p.status}</span>
+        <span class="status-badge ${p.status === "success" ? "posted" : p.status}">${p.status === "success" ? "OK" : "Erro"}</span>
       </div>
-    `).join("") || "<p class='hint'>Nenhuma publicação ainda</p>";
+    `).join("") : "<p class='hint'>Nenhuma publicação ainda — publique em Publicar, inicie um Loop ou agende vídeos</p>";
   }
 }
 
@@ -284,11 +362,15 @@ async function loadAccounts() {
 function renderAccountsList() {
   const el = document.getElementById("accounts-list");
   if (!el) return;
-  el.innerHTML = accountsCache.map(a => `
+  el.innerHTML = accountsCache.map(a => {
+    const fb = a.fallback_account_id
+      ? accountsCache.find(x => x.id === a.fallback_account_id)?.name || `#${a.fallback_account_id}`
+      : "não";
+    return `
     <div class="account-item">
       <div>
         <strong>${a.name}</strong> @${a.username || "—"}
-        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.posts_last_24h}/${a.max_posts_per_day}d | Proxy: ${a.proxy_url ? "sim" : "não"}</div>
+        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.posts_last_24h}/${a.max_posts_per_day}d | Proxy: ${a.proxy_url ? "sim" : "não"} | Contingência: ${fb}</div>
       </div>
       <div class="actions">
         <button class="btn secondary" onclick="editAccount(${a.id})">Editar</button>
@@ -296,15 +378,26 @@ function renderAccountsList() {
         <button class="btn danger" onclick="deleteAccount(${a.id})">Excluir</button>
       </div>
     </div>
-  `).join("") || "<p class='hint'>Nenhuma conta cadastrada</p>";
+  `}).join("") || "<p class='hint'>Nenhuma conta cadastrada</p>";
 }
 
 function populateAccountSelects() {
-  ["post-account", "loop-account", "pub-account"].forEach(id => {
+  ["post-account", "loop-account", "pub-account", "sch-account"].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const current = sel.value;
     sel.innerHTML = accountsCache.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
+    if (current) sel.value = current;
+  });
+
+  ["fallback_account_id", "sch-fallback"].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const current = sel.value;
+    const accountId = document.getElementById("account-id")?.value;
+    sel.innerHTML = `<option value="">Nenhuma</option>` + accountsCache
+      .filter(a => String(a.id) !== String(accountId))
+      .map(a => `<option value="${a.id}">${a.name}</option>`).join("");
     if (current) sel.value = current;
   });
 }
@@ -331,6 +424,8 @@ function editAccount(id) {
   document.getElementById("max_posts_per_hour").value = a.max_posts_per_hour;
   document.getElementById("default_caption").value = a.default_caption || "";
   document.getElementById("is_active").checked = a.is_active;
+  populateAccountSelects();
+  document.getElementById("fallback_account_id").value = a.fallback_account_id || "";
   updateCaptionCount();
 }
 
@@ -347,6 +442,9 @@ async function saveAccount(e) {
     max_posts_per_hour: +document.getElementById("max_posts_per_hour").value,
     default_caption: document.getElementById("default_caption").value,
     is_active: document.getElementById("is_active").checked,
+    fallback_account_id: document.getElementById("fallback_account_id").value
+      ? +document.getElementById("fallback_account_id").value
+      : null,
   };
   if (token && token !== "••••••••") body.access_token = token;
   try {
@@ -630,6 +728,245 @@ async function initLoopPage() {
     loopCap.addEventListener("input", () => { loopCounter.textContent = loopCap.value.length; });
   }
   loadLoopConfig();
+}
+
+// --- Schedule ---
+
+let scheduleMode = "batch";
+let scheduleListChart = null;
+let schVideoCounter = 0;
+let schCustomCounter = 0;
+
+function setScheduleMode(mode) {
+  scheduleMode = mode;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
+  document.getElementById("mode-batch")?.classList.toggle("hidden", mode !== "batch");
+  document.getElementById("mode-custom")?.classList.toggle("hidden", mode !== "custom");
+}
+
+function addScheduleVideoRow(video = {}) {
+  const container = document.getElementById("sch-video-rows");
+  if (!container) return;
+  const id = ++schVideoCounter;
+  const row = document.createElement("div");
+  row.className = "video-row";
+  row.innerHTML = `
+    <div class="video-row-header">
+      <strong>Vídeo</strong>
+      <button type="button" class="btn danger" onclick="this.closest('.video-row').remove()">Remover</button>
+    </div>
+    <label class="field-label">URL do vídeo<input class="sch-video-url" value="${video.video_url || ""}"></label>
+    <label class="field-label">URL da capa<input class="sch-cover-url" value="${video.cover_url || ""}"></label>
+    <div class="upload-mini">
+      <input type="file" class="sch-video-file" accept="video/*" hidden id="svf-${id}">
+      <input type="file" class="sch-cover-file" accept="image/*" hidden id="scf-${id}">
+      <button type="button" class="btn secondary" onclick="document.getElementById('svf-${id}').click()">Upload vídeo</button>
+      <button type="button" class="btn secondary" onclick="document.getElementById('scf-${id}').click()">Upload capa</button>
+    </div>
+  `;
+  container.appendChild(row);
+
+  row.querySelector(".sch-video-file").addEventListener("change", async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    toast("Enviando vídeo...");
+    const uploaded = await uploadFile("/api/upload/video", file);
+    row.querySelector(".sch-video-url").value = uploaded.url;
+    toast("Vídeo adicionado");
+  });
+
+  row.querySelector(".sch-cover-file").addEventListener("change", async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const uploaded = await uploadFile("/api/upload/image", file);
+    row.querySelector(".sch-cover-url").value = uploaded.url;
+    toast("Capa adicionada");
+  });
+}
+
+function addCustomScheduleRow(item = {}) {
+  const container = document.getElementById("sch-custom-rows");
+  if (!container) return;
+  const id = ++schCustomCounter;
+  const row = document.createElement("div");
+  row.className = "video-row";
+  row.innerHTML = `
+    <div class="video-row-header">
+      <strong>Item agendado</strong>
+      <button type="button" class="btn danger" onclick="this.closest('.video-row').remove()">Remover</button>
+    </div>
+    <label class="field-label">Data/hora<input type="datetime-local" class="sch-custom-at" value="${item.scheduled_at || ""}" required></label>
+    <label class="field-label">URL do vídeo<input class="sch-custom-video" value="${item.video_url || ""}"></label>
+    <label class="field-label">URL da capa<input class="sch-custom-cover" value="${item.cover_url || ""}"></label>
+    <label class="field-label">Legenda<textarea class="sch-custom-caption" rows="2">${item.caption || ""}</textarea></label>
+    <div class="upload-mini">
+      <input type="file" class="sch-custom-video-file" accept="video/*" hidden id="cvf-${id}">
+      <button type="button" class="btn secondary" onclick="document.getElementById('cvf-${id}').click()">Upload vídeo</button>
+    </div>
+  `;
+  container.appendChild(row);
+
+  row.querySelector(".sch-custom-video-file").addEventListener("change", async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const uploaded = await uploadFile("/api/upload/video", file);
+    row.querySelector(".sch-custom-video").value = uploaded.url;
+    toast("Vídeo adicionado");
+  });
+}
+
+function toIsoLocal(dtLocal) {
+  if (!dtLocal) return "";
+  const d = new Date(dtLocal);
+  return d.toISOString();
+}
+
+async function submitSchedule(e) {
+  e.preventDefault();
+  const accountId = +document.getElementById("sch-account").value;
+  const fallbackVal = document.getElementById("sch-fallback").value;
+  const body = {
+    name: document.getElementById("sch-name").value,
+    account_id: accountId,
+    fallback_account_id: fallbackVal ? +fallbackVal : null,
+  };
+
+  if (scheduleMode === "batch") {
+    const videos = [...document.querySelectorAll("#sch-video-rows .video-row")].map(row => ({
+      video_url: row.querySelector(".sch-video-url").value.trim(),
+      cover_url: row.querySelector(".sch-cover-url").value.trim(),
+    })).filter(v => v.video_url);
+    if (!videos.length) return toast("Adicione pelo menos 1 vídeo", "error");
+    body.start_at = toIsoLocal(document.getElementById("sch-start").value);
+    body.interval_minutes = +document.getElementById("sch-interval").value;
+    body.caption = document.getElementById("sch-caption").value;
+    body.videos = videos;
+  } else {
+    const items = [...document.querySelectorAll("#sch-custom-rows .video-row")].map(row => ({
+      scheduled_at: toIsoLocal(row.querySelector(".sch-custom-at").value),
+      video_url: row.querySelector(".sch-custom-video").value.trim(),
+      cover_url: row.querySelector(".sch-custom-cover").value.trim(),
+      caption: row.querySelector(".sch-custom-caption").value,
+    })).filter(i => i.video_url && i.scheduled_at);
+    if (!items.length) return toast("Adicione itens com horário e vídeo", "error");
+    body.items = items;
+  }
+
+  try {
+    const res = await api("/api/schedule/batch", { method: "POST", body: JSON.stringify(body) });
+    toast(`${res.created} vídeo(s) agendado(s)`);
+    document.getElementById("schedule-form").reset();
+    document.getElementById("sch-video-rows").innerHTML = "";
+    document.getElementById("sch-custom-rows").innerHTML = "";
+    addScheduleVideoRow();
+    loadScheduleList();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function cancelSchedule(id) {
+  if (!confirm("Cancelar este agendamento?")) return;
+  try {
+    await api(`/api/schedule/${id}`, { method: "DELETE" });
+    toast("Agendamento cancelado");
+    loadScheduleList();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function loadScheduleList() {
+  const list = document.getElementById("schedule-list");
+  const statsEl = document.getElementById("schedule-stats");
+  if (!list && !statsEl) return;
+
+  const items = await api("/api/schedule");
+  const stats = { pending: 0, posted: 0, error: 0, processing: 0, cancelled: 0 };
+  items.forEach(i => { stats[i.status] = (stats[i.status] || 0) + 1; });
+
+  if (statsEl) {
+    statsEl.innerHTML = `
+      <div class="stat-card"><div class="value">${stats.pending || 0}</div><div class="label">Pendentes</div></div>
+      <div class="stat-card"><div class="value">${stats.posted || 0}</div><div class="label">Publicados</div></div>
+      <div class="stat-card"><div class="value">${stats.error || 0}</div><div class="label">Erros</div></div>
+      <div class="stat-card"><div class="value">${stats.processing || 0}</div><div class="label">Processando</div></div>
+    `;
+  }
+
+  if (document.getElementById("schedule-chart")) {
+    scheduleListChart = renderChart("schedule-chart", {
+      type: "doughnut",
+      data: {
+        labels: ["Pendentes", "Publicados", "Erros", "Processando"],
+        datasets: [{
+          data: [stats.pending || 0, stats.posted || 0, stats.error || 0, stats.processing || 0],
+          backgroundColor: ["#60a5fa", "#4ade80", "#f87171", "#fbbf24"],
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { color: "#cbd5e1" } } },
+      },
+    }, scheduleListChart);
+  }
+
+  if (list) {
+    list.innerHTML = items.length ? items.map(i => `
+      <div class="schedule-item">
+        <video src="${i.video_url}" muted preload="metadata"></video>
+        <div>
+          <strong>${i.account_name}</strong>
+          ${i.posted_account_name && i.posted_account_name !== i.account_name ? `<span class="hint"> → ${i.posted_account_name} (contingência)</span>` : ""}
+          <div class="meta">${formatDateTime(i.scheduled_at)}${i.posted_at ? ` · publicado ${formatDateTime(i.posted_at)}` : ""}</div>
+          <div class="meta">${i.caption ? i.caption.slice(0, 80) : "Sem legenda"}</div>
+          ${i.error_message ? `<div class="error-text">${i.error_message}</div>` : ""}
+        </div>
+        <div style="text-align:right">
+          <span class="status-badge ${i.status}">${scheduleStatusLabel(i.status)}</span>
+          ${i.status === "pending" || i.status === "error" ? `<div style="margin-top:8px"><button class="btn ghost" style="font-size:0.75rem" onclick="cancelSchedule(${i.id})">Cancelar</button></div>` : ""}
+        </div>
+      </div>
+    `).join("") : "<p class='hint'>Nenhum agendamento ainda</p>";
+  }
+}
+
+async function initSchedulePage() {
+  await loadAccounts();
+  populateAccountSelects();
+  addScheduleVideoRow();
+  addCustomScheduleRow();
+
+  const cap = document.getElementById("sch-caption");
+  const counter = document.getElementById("sch-caption-count");
+  if (cap && counter) cap.addEventListener("input", () => { counter.textContent = cap.value.length; });
+
+  const bulk = document.getElementById("sch-bulk-upload");
+  if (bulk) {
+    bulk.addEventListener("change", async () => {
+      const files = [...bulk.files];
+      toast(`Enviando ${files.length} vídeo(s)...`);
+      for (const file of files) {
+        try {
+          const uploaded = await uploadFile("/api/upload/video", file);
+          addScheduleVideoRow({ video_url: uploaded.url });
+        } catch { /* continue */ }
+      }
+      bulk.value = "";
+      toast("Upload concluído");
+    });
+  }
+
+  const start = document.getElementById("sch-start");
+  if (start) {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    start.value = now.toISOString().slice(0, 16);
+  }
+
+  loadScheduleList();
+  setInterval(loadScheduleList, 20000);
 }
 
 // --- Settings ---

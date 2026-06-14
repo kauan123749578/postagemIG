@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Agendamentos — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Agendamentos</h1>
+    <p class="subtitle">Programe vídeos individuais ou lotes com data, hora e conta de contingência</p>
+  </div>
+  <button class="btn primary" onclick="loadScheduleList()">Atualizar</button>
+</div>
+
+<div class="stats-grid" id="schedule-stats"></div>
+
+<div class="grid-2">
+  <section class="card glass">
+    <h2>Novo agendamento</h2>
+    <form id="schedule-form" onsubmit="submitSchedule(event)">
+      <label class="field-label">Nome do lote<input id="sch-name" required placeholder="Ex: Semana 1 — Reels"></label>
+      <label class="field-label">Conta principal
+        <select id="sch-account" required></select>
+      </label>
+      <label class="field-label">Conta de contingência
+        <select id="sch-fallback">
+          <option value="">Nenhuma</option>
+        </select>
+        <span class="hint">Se a principal cair, a contingência assume automaticamente</span>
+      </label>
+
+      <div class="tabs">
+        <button type="button" class="tab active" data-mode="batch" onclick="setScheduleMode('batch')">Lote com intervalo</button>
+        <button type="button" class="tab" data-mode="custom" onclick="setScheduleMode('custom')">Horários personalizados</button>
+      </div>
+
+      <div id="mode-batch">
+        <label class="field-label">Início do lote<input type="datetime-local" id="sch-start" required></label>
+        <label class="field-label">Intervalo entre vídeos (minutos)<input type="number" id="sch-interval" value="60" min="1" max="1440"></label>
+        <div class="caption-editor">
+          <div class="caption-header">
+            <label class="field-label no-margin">Legenda do lote</label>
+            <span class="caption-counter"><span id="sch-caption-count">0</span> / 2200</span>
+          </div>
+          <textarea id="sch-caption" class="caption-large" rows="4" maxlength="2200"></textarea>
+        </div>
+        <div id="sch-video-rows"></div>
+        <button type="button" class="btn secondary" onclick="addScheduleVideoRow()">+ Adicionar vídeo</button>
+        <div class="upload-mini" style="margin-top:12px">
+          <input type="file" id="sch-bulk-upload" accept="video/*" multiple hidden>
+          <button type="button" class="btn secondary" onclick="document.getElementById('sch-bulk-upload').click()">Upload em lote</button>
+        </div>
+      </div>
+
+      <div id="mode-custom" class="hidden">
+        <div id="sch-custom-rows"></div>
+        <button type="button" class="btn secondary" onclick="addCustomScheduleRow()">+ Horário personalizado</button>
+      </div>
+
+      <div class="actions" style="margin-top:16px">
+        <button type="submit" class="btn primary">Agendar</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card glass">
+    <h2>Próximos agendamentos</h2>
+    <div class="chart-wrap" style="margin-bottom:16px">
+      <canvas id="schedule-chart"></canvas>
+    </div>
+    <div id="schedule-list"></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>initSchedulePage();</script>
+{% endblock %}
