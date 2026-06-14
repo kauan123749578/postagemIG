@@ -75,7 +75,7 @@ def _process_single_loop(loop_id: int) -> None:
         index = loop.current_index % len(videos)
         item = videos[index]
         video_url = item["video_url"]
-        cover_url = item.get("cover_url") or None
+        cover_url = item.get("cover_url") or loop.batch_cover_url or None
         caption = _caption_for_loop(loop, account)
 
         try:

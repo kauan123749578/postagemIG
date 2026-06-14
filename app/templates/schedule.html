@@ -4,7 +4,7 @@
 <div class="page-header">
   <div>
     <h1>Agendamentos</h1>
-    <p class="subtitle">Envie os vídeos, o servidor gera a URL pública e agenda os Reels automaticamente</p>
+    <p class="subtitle">Envie os vídeos, capa do lote, e o servidor agenda os Reels automaticamente</p>
   </div>
   <button class="btn primary" onclick="loadScheduleList()">Atualizar</button>
 </div>
@@ -16,22 +16,30 @@
     <h2>Novo lote de Reels</h2>
     <form id="schedule-form" onsubmit="submitSchedule(event)">
       <label class="field-label">Nome do lote<input id="sch-name" required placeholder="Ex: Semana 1 — Reels"></label>
-      <div class="row">
-        <label class="field-label">Conta principal
-          <select id="sch-account" required></select>
-        </label>
-        <label class="field-label">Conta de contingência
-          <select id="sch-fallback">
-            <option value="">Nenhuma</option>
-          </select>
-        </label>
-      </div>
+      <label class="field-label">Conta principal
+        <select id="sch-account" required></select>
+      </label>
 
       <div id="sch-dropzone" class="dropzone dropzone-lg">
         <input type="file" id="sch-file-input" accept="video/*" multiple hidden>
         <div class="dropzone-icon">🎬</div>
         <p><strong>Arraste vídeos aqui</strong> ou clique para selecionar</p>
         <p class="hint">Upload automático → URL pública → agendamento em lote</p>
+      </div>
+
+      <div class="cover-batch-block">
+        <label class="field-label">Capa do lote (thumb) — mesma para todos os vídeos</label>
+        <div class="row cover-upload-row">
+          <div class="cover-preview-wrap" id="sch-cover-preview">
+            <span class="hint">Nenhuma capa</span>
+          </div>
+          <div>
+            <input type="file" id="sch-cover-input" accept="image/*" hidden>
+            <button type="button" class="btn secondary" onclick="document.getElementById('sch-cover-input').click()">Upload capa</button>
+            <input type="hidden" id="sch-cover-url">
+            <p class="hint" style="margin-top:8px">JPEG/PNG — aparece como thumbnail do Reel na Meta</p>
+          </div>
+        </div>
       </div>
 
       <div id="sch-upload-progress" class="hidden batch-queue">

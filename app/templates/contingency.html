@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Contingência — Postagem IG{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Contas de contingência</h1>
+    <p class="subtitle">Defina qual conta backup assume quando a principal cair ou falhar na API</p>
+  </div>
+  <button class="btn primary" onclick="saveContingency()">Salvar mapa</button>
+</div>
+
+<div class="notice notice-info">
+  <strong>Como funciona:</strong> cadastre todas as contas em <a href="/accounts">Contas</a>. Aqui você só escolhe, para cada conta principal, qual outra conta entra no lugar automaticamente em caso de falha.
+</div>
+
+<section class="card glass glow">
+  <h2>Mapa de contingência</h2>
+  <div class="table-wrap">
+    <table id="contingency-table">
+      <thead>
+        <tr>
+          <th>Conta principal</th>
+          <th>Status</th>
+          <th>Conta de contingência</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="actions" style="margin-top:20px">
+    <button type="button" class="btn primary" onclick="saveContingency()">Salvar alterações</button>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>initContingencyPage();</script>
+{% endblock %}

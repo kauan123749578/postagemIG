@@ -50,9 +50,6 @@ def _process_due_posts() -> None:
                 db.commit()
                 continue
 
-            if item.fallback_account_id:
-                account.fallback_account_id = item.fallback_account_id
-
             try:
                 result = publish_reel(
                     db,

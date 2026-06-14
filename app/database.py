@@ -92,3 +92,13 @@ def migrate_schema() -> None:
     if account_cols and "fallback_account_id" not in account_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE accounts ADD COLUMN fallback_account_id INTEGER"))
+
+    loop_cols = _table_columns("loop_configs")
+    if loop_cols and "batch_cover_url" not in loop_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE loop_configs ADD COLUMN batch_cover_url TEXT DEFAULT ''"))
+
+    recurring_cols = _table_columns("recurring_batch_configs")
+    if recurring_cols and "cover_url" not in recurring_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE recurring_batch_configs ADD COLUMN cover_url TEXT DEFAULT ''"))

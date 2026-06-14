@@ -177,6 +177,7 @@ class LoopConfigRequest(BaseModel):
     caption: str = ""
     batch_size: int = Field(default=4, ge=1, le=50)
     interval_seconds: int = Field(default=60, ge=0, le=3600)
+    batch_cover_url: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -207,7 +208,7 @@ class ScheduleItemCreate(BaseModel):
 class ScheduleBatchCreate(BaseModel):
     name: str
     account_id: int
-    fallback_account_id: int | None = None
+    cover_url: str = ""
     items: list[ScheduleItemCreate] = []
     start_at: str | None = None
     interval_minutes: int = Field(default=60, ge=1, le=1440)
@@ -215,11 +216,20 @@ class ScheduleBatchCreate(BaseModel):
     caption: str = ""
 
 
+class ContingencyMapping(BaseModel):
+    account_id: int
+    fallback_account_id: int | None = None
+
+
+class ContingencyUpdate(BaseModel):
+    mappings: list[ContingencyMapping]
+
+
 class RecurringBatchRequest(BaseModel):
     name: str = "Lote recorrente"
     videos: list[LoopVideoItem]
     caption: str = ""
-    fallback_account_id: int | None = None
+    cover_url: str = ""
     duration_hours: int = Field(default=12, ge=1, le=168)
     cycle_interval_hours: int = Field(default=1, ge=1, le=24)
     video_interval_seconds: int = Field(default=60, ge=0, le=3600)
@@ -357,6 +367,11 @@ def schedule_page(request: Request):
 @app.get("/accounts", response_class=HTMLResponse)
 def accounts_page(request: Request):
     return templates.TemplateResponse(request, "accounts.html", {"page": "accounts"})
+
+
+@app.get("/contingency", response_class=HTMLResponse)
+def contingency_page(request: Request):
+    return templates.TemplateResponse(request, "contingency.html", {"page": "contingency"})
 
 
 @app.get("/loop", response_class=HTMLResponse)
@@ -510,6 +525,42 @@ def get_account(account_id: int, db: Session = Depends(get_db)):
     return _account_dict(_get_account_or_404(db, account_id), db)
 
 
+@app.get("/api/contingency")
+def list_contingency(db: Session = Depends(get_db)):
+    accounts = db.query(Account).order_by(Account.id).all()
+    return [
+        {
+            "id": a.id,
+            "name": a.name,
+            "username": a.username,
+            "is_active": a.is_active,
+            "health_status": a.health_status,
+            "fallback_account_id": a.fallback_account_id,
+            "fallback_name": next((x.name for x in accounts if x.id == a.fallback_account_id), ""),
+        }
+        for a in accounts
+    ]
+
+
+@app.put("/api/contingency")
+def update_contingency(body: ContingencyUpdate, db: Session = Depends(get_db)):
+    account_ids = {a.id for a in db.query(Account).all()}
+    for item in body.mappings:
+        if item.account_id not in account_ids:
+            raise HTTPException(404, f"Conta {item.account_id} não encontrada")
+        if item.fallback_account_id == item.account_id:
+            raise HTTPException(400, "Conta não pode ser contingência de si mesma")
+        if item.fallback_account_id and item.fallback_account_id not in account_ids:
+            raise HTTPException(404, f"Contingência {item.fallback_account_id} não encontrada")
+
+    for item in body.mappings:
+        account = db.get(Account, item.account_id)
+        if account:
+            account.fallback_account_id = item.fallback_account_id
+    db.commit()
+    return list_contingency(db)
+
+
 @app.patch("/api/accounts/{account_id}")
 def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(get_db)):
     account = _get_account_or_404(db, account_id)
@@ -652,13 +703,14 @@ def get_loop(account_id: int, db: Session = Depends(get_db)):
     _get_account_or_404(db, account_id)
     loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
     if not loop:
-        return {"account_id": account_id, "videos": [], "caption": "", "batch_size": 4, "interval_seconds": 60, "is_running": False}
+        return {"account_id": account_id, "videos": [], "caption": "", "batch_size": 4, "interval_seconds": 60, "batch_cover_url": "", "is_running": False}
     return {
         "account_id": account_id,
         "videos": json.loads(loop.videos_json or "[]"),
         "caption": loop.caption,
         "batch_size": loop.batch_size,
         "interval_seconds": loop.interval_seconds,
+        "batch_cover_url": loop.batch_cover_url or "",
         "is_running": loop.is_running,
         "current_index": loop.current_index,
         "batches_completed": loop.batches_completed,
@@ -683,6 +735,7 @@ def save_loop(account_id: int, body: LoopConfigRequest, db: Session = Depends(ge
     loop.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
     loop.batch_size = body.batch_size
     loop.interval_seconds = body.interval_seconds
+    loop.batch_cover_url = body.batch_cover_url
     db.commit()
     return get_loop(account_id, db)
 
@@ -722,6 +775,7 @@ def _recurring_dict(config: RecurringBatchConfig) -> dict:
         "videos": json.loads(config.videos_json or "[]"),
         "caption": config.caption,
         "fallback_account_id": config.fallback_account_id,
+        "cover_url": config.cover_url or "",
         "duration_hours": config.duration_hours,
         "cycle_interval_hours": config.cycle_interval_hours,
         "video_interval_seconds": config.video_interval_seconds,
@@ -773,7 +827,7 @@ def save_recurring_batch(account_id: int, body: RecurringBatchRequest, db: Sessi
     config.name = body.name
     config.videos_json = json.dumps([v.model_dump() for v in body.videos])
     config.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
-    config.fallback_account_id = body.fallback_account_id
+    config.cover_url = body.cover_url
     config.duration_hours = body.duration_hours
     config.cycle_interval_hours = body.cycle_interval_hours
     config.video_interval_seconds = body.video_interval_seconds
@@ -829,13 +883,12 @@ def list_schedule(db: Session = Depends(get_db)):
 @app.post("/api/schedule/batch", status_code=201)
 def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_db)):
     _get_account_or_404(db, body.account_id)
-    if body.fallback_account_id:
-        _get_account_or_404(db, body.fallback_account_id)
+    batch_cover = body.cover_url.strip()
 
     batch = ScheduledBatch(
         name=body.name,
         account_id=body.account_id,
-        fallback_account_id=body.fallback_account_id,
+        fallback_account_id=None,
     )
     db.add(batch)
     db.flush()
@@ -847,9 +900,9 @@ def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_d
             post = ScheduledPost(
                 batch_id=batch.id,
                 account_id=body.account_id,
-                fallback_account_id=body.fallback_account_id,
+                fallback_account_id=None,
                 video_url=item.video_url,
-                cover_url=item.cover_url,
+                cover_url=item.cover_url or batch_cover,
                 caption=(item.caption or body.caption)[:INSTAGRAM_CAPTION_MAX],
                 scheduled_at=_parse_dt(item.scheduled_at),
                 sort_order=idx,
@@ -863,9 +916,9 @@ def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_d
             post = ScheduledPost(
                 batch_id=batch.id,
                 account_id=body.account_id,
-                fallback_account_id=body.fallback_account_id,
+                fallback_account_id=None,
                 video_url=video.video_url,
-                cover_url=video.cover_url,
+                cover_url=video.cover_url or batch_cover,
                 caption=body.caption[:INSTAGRAM_CAPTION_MAX],
                 scheduled_at=scheduled,
                 sort_order=idx,

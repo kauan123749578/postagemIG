@@ -108,6 +108,7 @@ class LoopConfig(Base):
     caption: Mapped[str] = mapped_column(Text, default="")
     batch_size: Mapped[int] = mapped_column(Integer, default=4)
     interval_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    batch_cover_url: Mapped[str] = mapped_column(Text, default="")
     is_running: Mapped[bool] = mapped_column(Boolean, default=False)
     current_index: Mapped[int] = mapped_column(Integer, default=0)
     batches_completed: Mapped[int] = mapped_column(Integer, default=0)
@@ -169,6 +170,7 @@ class RecurringBatchConfig(Base):
     duration_hours: Mapped[int] = mapped_column(Integer, default=12)
     cycle_interval_hours: Mapped[int] = mapped_column(Integer, default=1)
     video_interval_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    cover_url: Mapped[str] = mapped_column(Text, default="")
 
     is_running: Mapped[bool] = mapped_column(Boolean, default=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

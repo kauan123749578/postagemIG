@@ -76,9 +76,6 @@ def _process_recurring_batch(config_id: int) -> None:
             if (now - last_post).total_seconds() < config.video_interval_seconds:
                 return
 
-        if config.fallback_account_id:
-            account.fallback_account_id = config.fallback_account_id
-
         allowed, reason = can_post(
             db, account.id, account.max_posts_per_day, account.max_posts_per_hour
         )
@@ -90,6 +87,7 @@ def _process_recurring_batch(config_id: int) -> None:
         index = config.cycle_video_index % len(videos)
         item = videos[index]
         caption = config.caption or account.default_caption or ""
+        cover_url = item.get("cover_url") or config.cover_url or None
 
         try:
             result = publish_reel(
@@ -97,7 +95,7 @@ def _process_recurring_batch(config_id: int) -> None:
                 account,
                 item["video_url"],
                 caption,
-                cover_url=item.get("cover_url") or None,
+                cover_url=cover_url,
             )
             config.total_posts += 1
             config.last_post_at = now

@@ -30,6 +30,17 @@
     </div>
 
     <h3 class="section-title">Vídeos</h3>
+    <div class="cover-batch-block">
+      <label class="field-label">Capa do lote — mesma para todos os vídeos</label>
+      <div class="row cover-upload-row">
+        <div class="cover-preview-wrap" id="loop-cover-preview"><span class="hint">Nenhuma capa</span></div>
+        <div>
+          <input type="file" id="loop-cover-input" accept="image/*" hidden>
+          <button type="button" class="btn secondary" onclick="document.getElementById('loop-cover-input').click()">Upload capa</button>
+          <input type="hidden" id="loop-cover-url">
+        </div>
+      </div>
+    </div>
     <div class="dropzone dropzone-lg" id="loop-video-dropzone">
       <div class="dropzone-icon">🎬</div>
       <p><strong>Arraste vídeos</strong> para adicionar ao loop</p>
@@ -77,6 +88,17 @@
     </div>
 
     <h3 class="section-title">Vídeos do lote</h3>
+    <div class="cover-batch-block">
+      <label class="field-label">Capa do lote — mesma para todos os vídeos</label>
+      <div class="row cover-upload-row">
+        <div class="cover-preview-wrap" id="recurring-cover-preview"><span class="hint">Nenhuma capa</span></div>
+        <div>
+          <input type="file" id="recurring-cover-input" accept="image/*" hidden>
+          <button type="button" class="btn secondary" onclick="document.getElementById('recurring-cover-input').click()">Upload capa</button>
+          <input type="hidden" id="recurring-cover-url">
+        </div>
+      </div>
+    </div>
     <div class="dropzone dropzone-lg" id="recurring-dropzone">
       <div class="dropzone-icon">📦</div>
       <p><strong>Arraste vídeos</strong> — upload automático para URL pública</p>

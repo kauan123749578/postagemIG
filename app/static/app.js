@@ -381,15 +381,11 @@ async function loadAccounts() {
 function renderAccountsList() {
   const el = document.getElementById("accounts-list");
   if (!el) return;
-  el.innerHTML = accountsCache.map(a => {
-    const fb = a.fallback_account_id
-      ? accountsCache.find(x => x.id === a.fallback_account_id)?.name || `#${a.fallback_account_id}`
-      : "não";
-    return `
+  el.innerHTML = accountsCache.map(a => `
     <div class="account-item">
       <div>
         <strong>${a.name}</strong> @${a.username || "—"}
-        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.posts_last_24h}/${a.max_posts_per_day}d | Proxy: ${a.proxy_url ? "sim" : "não"} | Contingência: ${fb}</div>
+        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.posts_last_24h}/${a.max_posts_per_day}d | Proxy: ${a.proxy_url ? "sim" : "não"}</div>
       </div>
       <div class="actions">
         <button class="btn secondary" onclick="editAccount(${a.id})">Editar</button>
@@ -397,7 +393,7 @@ function renderAccountsList() {
         <button class="btn danger" onclick="deleteAccount(${a.id})">Excluir</button>
       </div>
     </div>
-  `}).join("") || "<p class='hint'>Nenhuma conta cadastrada</p>";
+  `).join("") || "<p class='hint'>Nenhuma conta cadastrada</p>";
 }
 
 function populateAccountSelects() {
@@ -408,16 +404,35 @@ function populateAccountSelects() {
     sel.innerHTML = accountsCache.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
     if (current) sel.value = current;
   });
+}
 
-  ["fallback_account_id", "sch-fallback"].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    const current = sel.value;
-    const accountId = document.getElementById("account-id")?.value;
-    sel.innerHTML = `<option value="">Nenhuma</option>` + accountsCache
-      .filter(a => String(a.id) !== String(accountId))
-      .map(a => `<option value="${a.id}">${a.name}</option>`).join("");
-    if (current) sel.value = current;
+function setCoverPreview(previewId, hiddenId, url) {
+  const wrap = document.getElementById(previewId);
+  const hidden = document.getElementById(hiddenId);
+  if (hidden) hidden.value = url || "";
+  if (wrap) {
+    wrap.innerHTML = url
+      ? `<img src="${url}" alt="Capa do lote">`
+      : `<span class="hint">Nenhuma capa</span>`;
+  }
+}
+
+function bindCoverUpload(inputId, previewId, hiddenId, onDone) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      toast("Enviando capa...");
+      const uploaded = await uploadFile("/api/upload/image", file);
+      setCoverPreview(previewId, hiddenId, uploaded.url);
+      toast("Capa do lote enviada");
+      if (onDone) onDone();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    input.value = "";
   });
 }
 
@@ -442,8 +457,6 @@ function editAccount(id) {
   document.getElementById("max_posts_per_day").value = a.max_posts_per_day;
   document.getElementById("max_posts_per_hour").value = a.max_posts_per_hour;
   document.getElementById("is_active").checked = a.is_active;
-  populateAccountSelects();
-  document.getElementById("fallback_account_id").value = a.fallback_account_id || "";
 }
 
 async function saveAccount(e) {
@@ -458,9 +471,6 @@ async function saveAccount(e) {
     max_posts_per_day: +document.getElementById("max_posts_per_day").value,
     max_posts_per_hour: +document.getElementById("max_posts_per_hour").value,
     is_active: document.getElementById("is_active").checked,
-    fallback_account_id: document.getElementById("fallback_account_id").value
-      ? +document.getElementById("fallback_account_id").value
-      : null,
   };
   if (token && token !== "••••••••") body.access_token = token;
   try {
@@ -494,6 +504,49 @@ async function checkHealth(id) {
 
 function initAccountsPage() {
   loadAccounts();
+}
+
+// --- Contingency ---
+
+let contingencyCache = [];
+
+async function loadContingencyTable() {
+  contingencyCache = await api("/api/contingency");
+  const tbody = document.querySelector("#contingency-table tbody");
+  if (!tbody) return;
+
+  tbody.innerHTML = contingencyCache.map(a => {
+    const options = `<option value="">Nenhuma</option>` + contingencyCache
+      .filter(x => x.id !== a.id)
+      .map(x => `<option value="${x.id}" ${a.fallback_account_id === x.id ? "selected" : ""}>${x.name}</option>`)
+      .join("");
+    return `
+      <tr>
+        <td><strong>${a.name}</strong><br><span class="hint">@${a.username || "—"}</span></td>
+        <td>${healthBadge(a.health_status)}</td>
+        <td><select class="contingency-select" data-account-id="${a.id}">${options}</select></td>
+      </tr>
+    `;
+  }).join("") || `<tr><td colspan="3" class="hint">Cadastre contas em Contas primeiro</td></tr>`;
+}
+
+async function saveContingency() {
+  const selects = [...document.querySelectorAll(".contingency-select")];
+  const mappings = selects.map(sel => ({
+    account_id: +sel.dataset.accountId,
+    fallback_account_id: sel.value ? +sel.value : null,
+  }));
+  try {
+    await api("/api/contingency", { method: "PUT", body: JSON.stringify({ mappings }) });
+    toast("Mapa de contingência salvo");
+    loadContingencyTable();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+function initContingencyPage() {
+  loadContingencyTable();
 }
 
 // --- Publish ---
@@ -675,6 +728,7 @@ async function loadLoopConfig() {
   document.getElementById("batch_size").value = data.batch_size;
   document.getElementById("interval_seconds").value = data.interval_seconds;
   document.getElementById("loop-caption").value = data.caption || "";
+  setCoverPreview("loop-cover-preview", "loop-cover-url", data.batch_cover_url || "");
 
   const container = document.getElementById("video-items");
   container.innerHTML = "";
@@ -709,6 +763,7 @@ async function saveLoop(e) {
       caption: document.getElementById("loop-caption").value,
       batch_size: +document.getElementById("batch_size").value,
       interval_seconds: +document.getElementById("interval_seconds").value,
+      batch_cover_url: document.getElementById("loop-cover-url")?.value || "",
     }),
   });
   toast("Loop salvo");
@@ -764,6 +819,7 @@ async function loadRecurringConfig() {
   document.getElementById("recurring-cycle-hours").value = data.cycle_interval_hours || 1;
   document.getElementById("recurring-video-interval").value = data.video_interval_seconds || 60;
   document.getElementById("recurring-caption").value = data.caption || "";
+  setCoverPreview("recurring-cover-preview", "recurring-cover-url", data.cover_url || "");
   document.getElementById("recurring-hint-hours").textContent = data.cycle_interval_hours || 1;
 
   const container = document.getElementById("recurring-video-items");
@@ -801,6 +857,7 @@ async function saveRecurringBatch(e) {
       name: document.getElementById("recurring-name").value,
       videos,
       caption: document.getElementById("recurring-caption").value,
+      cover_url: document.getElementById("recurring-cover-url")?.value || "",
       duration_hours: +document.getElementById("recurring-duration").value,
       cycle_interval_hours: +document.getElementById("recurring-cycle-hours").value,
       video_interval_seconds: +document.getElementById("recurring-video-interval").value,
@@ -842,6 +899,9 @@ async function initLoopPage() {
 
   setupDropzone("loop-video-dropzone", "loop-bulk-upload", files => bulkUploadToLoop(files, "video-items"));
   setupDropzone("recurring-dropzone", "recurring-upload", files => bulkUploadToLoop(files, "recurring-video-items"));
+
+  bindCoverUpload("loop-cover-input", "loop-cover-preview", "loop-cover-url");
+  bindCoverUpload("recurring-cover-input", "recurring-cover-preview", "recurring-cover-url");
 
   const loopCap = document.getElementById("loop-caption");
   const loopCounter = document.getElementById("loop-caption-count");
@@ -909,9 +969,13 @@ function renderSchedulePreview() {
     return;
   }
 
+  const coverUrl = document.getElementById("sch-cover-url")?.value || "";
   grid.innerHTML = scheduleBatch.map((item, i) => `
     <div class="preview-card">
-      <video src="${item.video_url}" muted preload="metadata"></video>
+      <div class="thumb-overlay">
+        <video src="${item.video_url}" muted preload="metadata"></video>
+        ${coverUrl ? `<img class="cover-thumb" src="${coverUrl}" alt="capa">` : ""}
+      </div>
       <div class="preview-card-body">
         <div class="name" title="${item.name}">${item.name}</div>
         <div class="time">${formatDateTime(computeScheduledTime(i).toISOString())}</div>
@@ -981,11 +1045,10 @@ async function submitSchedule(e) {
   if (!scheduleBatch.length) return toast("Envie pelo menos 1 vídeo", "error");
 
   const accountId = +document.getElementById("sch-account").value;
-  const fallbackVal = document.getElementById("sch-fallback").value;
   const body = {
     name: document.getElementById("sch-name").value,
     account_id: accountId,
-    fallback_account_id: fallbackVal ? +fallbackVal : null,
+    cover_url: document.getElementById("sch-cover-url")?.value || "",
     start_at: toIsoLocal(document.getElementById("sch-start").value),
     interval_minutes: +document.getElementById("sch-interval").value,
     caption: document.getElementById("sch-caption").value,
@@ -1077,6 +1140,8 @@ async function initSchedulePage() {
   const cap = document.getElementById("sch-caption");
   const counter = document.getElementById("sch-caption-count");
   if (cap && counter) cap.addEventListener("input", () => { counter.textContent = cap.value.length; });
+
+  bindCoverUpload("sch-cover-input", "sch-cover-preview", "sch-cover-url", renderSchedulePreview);
 
   const start = document.getElementById("sch-start");
   if (start) {
