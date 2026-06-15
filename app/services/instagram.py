@@ -6,6 +6,28 @@ import requests
 
 INSTAGRAM_CAPTION_MAX = 2200
 
+META_ERROR_HINTS: dict[int, str] = {
+    2207076: (
+        "Instagram não conseguiu processar o vídeo. Use MP4 (H.264 + AAC), "
+        "máx. ~100MB, URL pública acessível. Arquivos .mov podem falhar — converta para MP4."
+    ),
+    2207027: "Vídeo muito longo ou formato não suportado para Reels.",
+    36003: "Erro de permissão ou token expirado na API da Meta.",
+}
+
+
+def humanize_instagram_error(message: str, payload: dict | None = None) -> str:
+    payload = payload or {}
+    error = payload.get("error", payload)
+    code = error.get("code") if isinstance(error, dict) else None
+    subcode = error.get("error_subcode") if isinstance(error, dict) else None
+    lookup = subcode or code
+    if lookup in META_ERROR_HINTS:
+        return f"{message} — {META_ERROR_HINTS[lookup]}"
+    if "2207076" in message:
+        return f"{message} — {META_ERROR_HINTS[2207076]}"
+    return message
+
 
 class InstagramAPIError(Exception):
     def __init__(self, message: str, payload: dict[str, Any] | None = None):
@@ -70,7 +92,8 @@ class InstagramClient:
 
         if not response.ok or "error" in payload:
             error = payload.get("error", {})
-            raise InstagramAPIError(error.get("message", response.text), payload)
+            raw_message = error.get("message", response.text)
+            raise InstagramAPIError(humanize_instagram_error(raw_message, payload), payload)
 
         return payload
 

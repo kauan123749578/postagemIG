@@ -102,3 +102,9 @@ def migrate_schema() -> None:
     if recurring_cols and "cover_url" not in recurring_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE recurring_batch_configs ADD COLUMN cover_url TEXT DEFAULT ''"))
+    if recurring_cols and "last_attempt_at" not in recurring_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE recurring_batch_configs ADD COLUMN last_attempt_at TIMESTAMP"))
+    if recurring_cols and "consecutive_failures" not in recurring_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE recurring_batch_configs ADD COLUMN consecutive_failures INTEGER DEFAULT 0"))

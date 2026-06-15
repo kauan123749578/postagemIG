@@ -823,17 +823,19 @@ def _recurring_dict(config: RecurringBatchConfig, db: Session) -> dict:
 
     next_post_at = None
     waiting_for_video = False
-    if (
-        config.is_running
-        and config.last_post_at
-        and config.video_interval_seconds > 0
-        and cycle_index > 0
-        and not waiting_for_cycle
-    ):
-        last_post = _normalize_recurring_dt(config.last_post_at)
-        if last_post:
-            next_post_at = last_post + timedelta(seconds=config.video_interval_seconds)
-            waiting_for_video = now < next_post_at
+    next_retry_at = None
+    consecutive_failures = config.consecutive_failures or 0
+    if config.is_running and not waiting_for_cycle:
+        last_event = _normalize_recurring_dt(config.last_attempt_at) or _normalize_recurring_dt(config.last_post_at)
+        is_retry = consecutive_failures > 0
+        if last_event and (cycle_index > 0 or is_retry):
+            base_wait = config.video_interval_seconds or 0
+            if is_retry:
+                base_wait = max(base_wait, 120)
+            if base_wait > 0:
+                next_post_at = last_event + timedelta(seconds=base_wait)
+                next_retry_at = next_post_at
+                waiting_for_video = now < next_post_at
 
     usage = {}
     if account:
@@ -857,6 +859,8 @@ def _recurring_dict(config: RecurringBatchConfig, db: Session) -> dict:
         status_label = "aguardando_intervalo"
     elif config.last_error and config.last_error.startswith("Aguardando limite"):
         status_label = "limite_api"
+    elif consecutive_failures > 0:
+        status_label = "erro_video"
 
     return {
         "id": config.id,
@@ -888,6 +892,8 @@ def _recurring_dict(config: RecurringBatchConfig, db: Session) -> dict:
         "next_post_at": next_post_at.isoformat() if next_post_at else None,
         "waiting_for_cycle": waiting_for_cycle,
         "waiting_for_video": waiting_for_video,
+        "consecutive_failures": consecutive_failures,
+        "next_retry_at": next_retry_at.isoformat() if next_retry_at else None,
         "last_error": config.last_error,
         "remaining_minutes": remaining,
         "usage": usage,
@@ -989,6 +995,8 @@ def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Sessio
     config.total_posts = 0
     config.last_cycle_at = None
     config.last_post_at = None
+    config.last_attempt_at = None
+    config.consecutive_failures = 0
     config.last_error = ""
     db.commit()
     db.refresh(config)

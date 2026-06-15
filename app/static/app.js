@@ -714,6 +714,7 @@ function addVideoRow(video = {}, containerId = "video-items") {
     const uploaded = await uploadFile("/api/upload/video", file);
     row.querySelector(".video-url").value = uploaded.url;
     toast("Vídeo adicionado ao loop");
+    maybeAutoSaveBatch(containerId);
   });
 
   row.querySelector(".cover-file").addEventListener("change", async e => {
@@ -722,6 +723,7 @@ function addVideoRow(video = {}, containerId = "video-items") {
     const uploaded = await uploadFile("/api/upload/image", file);
     row.querySelector(".cover-url").value = uploaded.url;
     toast("Capa adicionada");
+    maybeAutoSaveBatch(containerId);
   });
 }
 
@@ -736,6 +738,7 @@ async function bulkUploadToLoop(files, containerId = "video-items") {
     } catch { /* continue */ }
   }
   toast(`${ok} vídeo(s) adicionados`);
+  maybeAutoSaveBatch(containerId);
 }
 
 function formHasFocus(formId) {
@@ -848,6 +851,7 @@ function recurringStatusBadge(data) {
     aguardando_ciclo: { cls: "waiting", label: "Aguardando próximo ciclo" },
     aguardando_intervalo: { cls: "waiting", label: "Intervalo entre vídeos" },
     limite_api: { cls: "limit", label: "Limite da API" },
+    erro_video: { cls: "limit", label: "Erro no vídeo" },
     parado: { cls: "stopped", label: "Parado" },
   };
   const item = map[data.status_label] || map[data.is_running ? "rodando" : "parado"];
@@ -983,8 +987,9 @@ function renderRecurringStatus(data) {
       <div class="batch-monitor-row">
         <span><strong>Intervalo entre lotes:</strong> ${data.cycle_interval_hours || 1}h</span>
         <span><strong>Intervalo entre vídeos:</strong> ${data.video_interval_seconds || 0}s</span>
-        <span><strong>Próximo vídeo:</strong> ${data.waiting_for_video ? formatCountdown(data.next_post_at) : (data.is_running ? "pronto" : "—")}</span>
+        <span><strong>Próximo vídeo:</strong> ${data.waiting_for_video ? formatCountdown(data.next_post_at || data.next_retry_at) : (data.is_running ? "pronto" : "—")}</span>
         <span><strong>Próximo ciclo:</strong> ${data.waiting_for_cycle ? formatCountdown(data.next_cycle_at) : (data.is_running ? "após completar o lote" : "—")}</span>
+        ${data.consecutive_failures ? `<span><strong>Tentativas falhas:</strong> ${data.consecutive_failures}/3 no vídeo atual</span>` : ""}
       </div>
       ${alertHtml}
     </div>
@@ -1055,6 +1060,55 @@ async function loadRecurringConfig(force = false) {
   }
 }
 
+function maybeAutoSaveBatch(containerId) {
+  if (containerId === "recurring-video-items") saveRecurringBatchSilent();
+  if (containerId === "video-items") saveLoopConfigSilent();
+}
+
+async function saveRecurringBatchSilent() {
+  const accountId = document.getElementById("recurring-account")?.value
+    || document.getElementById("loop-account")?.value;
+  if (!accountId) return;
+  const videos = getRecurringVideos();
+  if (!videos.length) return;
+  try {
+    await api(`/api/recurring-batch/${accountId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        name: document.getElementById("recurring-name").value,
+        videos,
+        caption: document.getElementById("recurring-caption").value,
+        cover_url: document.getElementById("recurring-cover-url")?.value || "",
+        duration_hours: +document.getElementById("recurring-duration").value,
+        cycle_interval_hours: +document.getElementById("recurring-cycle-hours").value,
+        video_interval_seconds: +document.getElementById("recurring-video-interval").value,
+      }),
+    });
+  } catch { /* auto-save silencioso */ }
+}
+
+async function saveLoopConfigSilent() {
+  const accountId = document.getElementById("loop-account")?.value;
+  if (!accountId) return;
+  const videos = [...document.querySelectorAll("#video-items .video-row")].map(row => ({
+    video_url: row.querySelector(".video-url").value.trim(),
+    cover_url: row.querySelector(".cover-url").value.trim(),
+  })).filter(v => v.video_url);
+  if (!videos.length) return;
+  try {
+    await api(`/api/loop/${accountId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        videos,
+        caption: document.getElementById("loop-caption").value,
+        batch_size: +document.getElementById("batch_size").value,
+        interval_seconds: +document.getElementById("interval_seconds").value,
+        batch_cover_url: document.getElementById("loop-cover-url")?.value || "",
+      }),
+    });
+  } catch { /* auto-save silencioso */ }
+}
+
 async function saveRecurringBatch(e) {
   if (e?.preventDefault) e.preventDefault();
   const accountId = document.getElementById("recurring-account").value
@@ -1111,8 +1165,8 @@ async function initLoopPage() {
   setupDropzone("loop-video-dropzone", "loop-bulk-upload", files => bulkUploadToLoop(files, "video-items"));
   setupDropzone("recurring-dropzone", "recurring-upload", files => bulkUploadToLoop(files, "recurring-video-items"));
 
-  bindCoverUpload("loop-cover-input", "loop-cover-preview", "loop-cover-url");
-  bindCoverUpload("recurring-cover-input", "recurring-cover-preview", "recurring-cover-url");
+  bindCoverUpload("loop-cover-input", "loop-cover-preview", "loop-cover-url", () => saveLoopConfigSilent());
+  bindCoverUpload("recurring-cover-input", "recurring-cover-preview", "recurring-cover-url", () => saveRecurringBatchSilent());
 
   const loopCap = document.getElementById("loop-caption");
   const loopCounter = document.getElementById("loop-caption-count");

@@ -180,4 +180,6 @@ class RecurringBatchConfig(Base):
     total_posts: Mapped[int] = mapped_column(Integer, default=0)
     last_post_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_cycle_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str] = mapped_column(Text, default="")
