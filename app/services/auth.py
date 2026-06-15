@@ -99,7 +99,7 @@ def delete_user(db: Session, user_id: int, current_user: AdminUser) -> None:
 
 def require_owner(user: AdminUser) -> None:
     if user.role != "owner":
-        raise HTTPException(403, "Apenas o proprietário pode gerenciar usuários")
+        raise HTTPException(403, "Apenas o administrador principal pode gerenciar usuários")
 
 
 def _client_ip(request: Request) -> str:

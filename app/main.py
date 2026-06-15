@@ -33,7 +33,7 @@ from app.services.health import check_account_health, refresh_account_insights
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
 from app.services.loop_worker import start_loop_worker
 from app.services.publisher import publish_reel
-from app.services.recurring_batch_worker import start_recurring_batch_worker
+from app.services.recurring_batch_worker import kick_recurring_batch, start_recurring_batch_worker
 from app.services.schedule_worker import start_schedule_worker
 from app.services.media_storage import list_media, save_image, save_video
 from app.services.rate_limit import can_post, usage_stats
@@ -385,7 +385,8 @@ def settings_page(request: Request):
 
 
 @app.get("/users", response_class=HTMLResponse)
-def users_page(request: Request):
+def users_page(request: Request, user: AdminUser = Depends(_current_user)):
+    require_owner(user)
     return templates.TemplateResponse(request, "users.html", {"page": "users"})
 
 
@@ -854,11 +855,14 @@ def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Sessio
     config.ends_at = now + timedelta(hours=duration)
     config.cycle_video_index = 0
     config.last_cycle_at = None
+    config.last_post_at = None
     config.last_error = ""
     db.commit()
+    db.refresh(config)
+    kick_recurring_batch(config.id)
     return {
         **_recurring_dict(config),
-        "message": f"Lote recorrente ativo por {duration}h — 1 lote a cada {config.cycle_interval_hours}h",
+        "message": f"Lote recorrente ativo por {duration}h — primeiro lote agora, depois 1 lote a cada {config.cycle_interval_hours}h",
     }
 
 

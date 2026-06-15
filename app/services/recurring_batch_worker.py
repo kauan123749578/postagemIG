@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal
 from app.models import Account, RecurringBatchConfig
 from app.services.instagram import InstagramAPIError
-from app.services.publisher import publish_reel
+from app.services.publisher import publish_reel, resolve_post_accounts
 from app.services.rate_limit import can_post
 
 logger = logging.getLogger("recurring_batch_worker")
@@ -56,28 +57,38 @@ def _process_recurring_batch(config_id: int) -> None:
             return
 
         account = db.get(Account, config.account_id)
-        if not account or not account.is_active:
-            config.last_error = "Conta inativa"
+        if not account:
+            config.last_error = "Conta não encontrada"
+            db.commit()
+            return
+
+        post_account, _ = resolve_post_accounts(db, account)
+        if not post_account or not post_account.is_active:
+            config.last_error = "Conta inativa e sem contingência disponível"
+            db.commit()
             return
 
         videos = _parse_videos(config.videos_json)
         if not videos:
             config.last_error = "Nenhum vídeo no lote"
+            db.commit()
             return
 
+        # Entre lotes: espera o intervalo só após concluir um ciclo completo.
         if config.cycle_video_index == 0 and config.last_cycle_at:
             last_cycle = _normalize_dt(config.last_cycle_at)
             wait_seconds = config.cycle_interval_hours * 3600
             if last_cycle and (now - last_cycle).total_seconds() < wait_seconds:
                 return
 
+        # Primeiro vídeo após iniciar não espera intervalo entre vídeos.
         last_post = _normalize_dt(config.last_post_at)
-        if last_post and config.video_interval_seconds > 0:
+        if last_post and config.video_interval_seconds > 0 and config.cycle_video_index > 0:
             if (now - last_post).total_seconds() < config.video_interval_seconds:
                 return
 
         allowed, reason = can_post(
-            db, account.id, account.max_posts_per_day, account.max_posts_per_hour
+            db, post_account.id, post_account.max_posts_per_day, post_account.max_posts_per_hour
         )
         if not allowed:
             config.last_error = f"Aguardando limite: {reason}"
@@ -136,6 +147,11 @@ async def _worker_loop() -> None:
             await asyncio.to_thread(_process_recurring_batch, config_id)
 
         await asyncio.sleep(5)
+
+
+def kick_recurring_batch(config_id: int) -> None:
+    """Dispara o primeiro post imediatamente (ex.: ao clicar Iniciar)."""
+    threading.Thread(target=_process_recurring_batch, args=(config_id,), daemon=True).start()
 
 
 def start_recurring_batch_worker() -> None:
