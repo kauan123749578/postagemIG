@@ -1,0 +1,16 @@
+---
+description: Commit e push automaticos apos alteracoes neste projeto
+alwaysApply: true
+---
+
+# Deploy workflow — Postagem IG
+
+Ao corrigir bugs, adicionar funcionalidades ou fazer qualquer alteracao de codigo neste projeto:
+
+1. Conclua a implementacao e verifique lints/erros obvios.
+2. Faca **commit e push** para `origin/main` automaticamente, sem esperar o usuario pedir.
+3. Use mensagens de commit curtas em portugues, no estilo do repositorio.
+4. Nao commite arquivos com secrets (`.env`, credenciais).
+5. Informe o hash do commit e confirme que o push foi enviado.
+
+Excecao: nao commitar se o usuario pedir explicitamente para **nao** commitar ou se nao houver mudancas.

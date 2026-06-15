@@ -575,12 +575,48 @@ def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(g
     return _account_dict(account, db)
 
 
+def _purge_account_dependencies(db: Session, account_id: int) -> None:
+    db.query(Account).filter(Account.fallback_account_id == account_id).update(
+        {Account.fallback_account_id: None}, synchronize_session=False
+    )
+
+    recurring = (
+        db.query(RecurringBatchConfig)
+        .filter(RecurringBatchConfig.account_id == account_id)
+        .first()
+    )
+    if recurring:
+        db.delete(recurring)
+    db.query(RecurringBatchConfig).filter(RecurringBatchConfig.fallback_account_id == account_id).update(
+        {RecurringBatchConfig.fallback_account_id: None}, synchronize_session=False
+    )
+
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if loop:
+        db.delete(loop)
+
+    for batch in db.query(ScheduledBatch).filter(ScheduledBatch.account_id == account_id).all():
+        db.query(ScheduledPost).filter(ScheduledPost.batch_id == batch.id).delete()
+        db.delete(batch)
+    db.query(ScheduledBatch).filter(ScheduledBatch.fallback_account_id == account_id).update(
+        {ScheduledBatch.fallback_account_id: None}, synchronize_session=False
+    )
+
+    db.query(ScheduledPost).filter(ScheduledPost.account_id == account_id).delete()
+    db.query(ScheduledPost).filter(ScheduledPost.fallback_account_id == account_id).update(
+        {ScheduledPost.fallback_account_id: None}, synchronize_session=False
+    )
+    db.query(ScheduledPost).filter(ScheduledPost.posted_account_id == account_id).update(
+        {ScheduledPost.posted_account_id: None}, synchronize_session=False
+    )
+
+    db.query(PostLog).filter(PostLog.account_id == account_id).delete()
+
+
 @app.delete("/api/accounts/{account_id}")
 def delete_account(account_id: int, db: Session = Depends(get_db)):
     account = _get_account_or_404(db, account_id)
-    if account.loop_config:
-        db.delete(account.loop_config)
-    db.query(PostLog).filter(PostLog.account_id == account_id).delete()
+    _purge_account_dependencies(db, account_id)
     db.delete(account)
     db.commit()
     return {"ok": True}

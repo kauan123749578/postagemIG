@@ -503,9 +503,14 @@ async function saveAccount(e) {
 
 async function deleteAccount(id) {
   if (!confirm("Excluir esta conta?")) return;
-  await api(`/api/accounts/${id}`, { method: "DELETE" });
-  toast("Conta excluída");
-  loadAccounts();
+  try {
+    await api(`/api/accounts/${id}`, { method: "DELETE" });
+    toast("Conta excluída");
+    if (document.getElementById("account-id")?.value === String(id)) resetAccountForm();
+    loadAccounts();
+  } catch (err) {
+    toast(err.message || "Não foi possível excluir a conta", "error");
+  }
 }
 
 async function checkHealth(id) {
