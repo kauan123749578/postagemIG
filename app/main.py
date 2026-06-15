@@ -29,6 +29,7 @@ from app.services.auth import (
     require_owner,
     set_session_cookie,
 )
+from app.services.cover import require_batch_cover
 from app.services.health import check_account_health, refresh_account_insights
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
 from app.services.loop_worker import start_loop_worker
@@ -240,6 +241,13 @@ class RecurringBatchStart(BaseModel):
 
 
 # --- Helpers ---
+
+def _require_cover_url(cover_url: str | None, *, context: str = "lote") -> str:
+    try:
+        return require_batch_cover(cover_url, context=context)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
 
 def _account_dict(account: Account, db: Session) -> dict:
     stats = usage_stats(db, account.id, account.max_posts_per_day, account.max_posts_per_hour)
@@ -684,10 +692,12 @@ def post_reel(body: PostReelRequest, db: Session = Depends(get_db)):
     account = _get_account_or_404(db, body.account_id)
     _enforce_post_limits(db, account)
     caption = body.caption or account.default_caption
+    if not (body.cover_url or "").strip():
+        raise HTTPException(400, "Capa é obrigatória para publicar Reels")
     try:
         result = publish_reel(
             db, account, body.video_url, caption,
-            cover_url=body.cover_url or None,
+            cover_url=body.cover_url,
             audio_name=body.audio_name or None,
         )
         return result
@@ -772,7 +782,7 @@ def save_loop(account_id: int, body: LoopConfigRequest, db: Session = Depends(ge
     loop.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
     loop.batch_size = body.batch_size
     loop.interval_seconds = body.interval_seconds
-    loop.batch_cover_url = body.batch_cover_url
+    loop.batch_cover_url = body.batch_cover_url or ""
     db.commit()
     return get_loop(account_id, db)
 
@@ -783,6 +793,8 @@ def start_loop(account_id: int, db: Session = Depends(get_db)):
     loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
     if not loop or not json.loads(loop.videos_json or "[]"):
         raise HTTPException(400, "Configure os vídeos antes de iniciar")
+    if not (loop.batch_cover_url or "").strip():
+        raise HTTPException(400, "Capa do lote é obrigatória — faça upload da capa antes de iniciar")
     loop.is_running = True
     loop.last_error = ""
     db.commit()
@@ -963,7 +975,7 @@ def save_recurring_batch(account_id: int, body: RecurringBatchRequest, db: Sessi
     config.name = body.name
     config.videos_json = json.dumps(new_videos)
     config.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
-    config.cover_url = body.cover_url
+    config.cover_url = body.cover_url or ""
     config.duration_hours = body.duration_hours
     config.cycle_interval_hours = body.cycle_interval_hours
     config.video_interval_seconds = body.video_interval_seconds
@@ -979,6 +991,8 @@ def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Sessio
     config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
     if not config or not json.loads(config.videos_json or "[]"):
         raise HTTPException(400, "Configure os vídeos do lote antes de iniciar")
+    if not (config.cover_url or "").strip():
+        raise HTTPException(400, "Capa do lote é obrigatória — faça upload da capa antes de iniciar")
 
     loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
     if loop and loop.is_running:
@@ -1028,12 +1042,13 @@ def list_schedule(db: Session = Depends(get_db)):
 @app.post("/api/schedule/batch", status_code=201)
 def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_db)):
     _get_account_or_404(db, body.account_id)
-    batch_cover = body.cover_url.strip()
+    batch_cover = _require_cover_url(body.cover_url, context="lote agendado")
 
     batch = ScheduledBatch(
         name=body.name,
         account_id=body.account_id,
         fallback_account_id=None,
+        cover_url=batch_cover,
     )
     db.add(batch)
     db.flush()
@@ -1047,7 +1062,7 @@ def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_d
                 account_id=body.account_id,
                 fallback_account_id=None,
                 video_url=item.video_url,
-                cover_url=item.cover_url or batch_cover,
+                cover_url=item.cover_url.strip() or batch_cover,
                 caption=(item.caption or body.caption)[:INSTAGRAM_CAPTION_MAX],
                 scheduled_at=_parse_dt(item.scheduled_at),
                 sort_order=idx,
@@ -1063,7 +1078,7 @@ def create_schedule_batch(body: ScheduleBatchCreate, db: Session = Depends(get_d
                 account_id=body.account_id,
                 fallback_account_id=None,
                 video_url=video.video_url,
-                cover_url=video.cover_url or batch_cover,
+                cover_url=(video.cover_url or "").strip() or batch_cover,
                 caption=body.caption[:INSTAGRAM_CAPTION_MAX],
                 scheduled_at=scheduled,
                 sort_order=idx,

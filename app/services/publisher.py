@@ -3,6 +3,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.models import Account, PostLog
+from app.services.cover import resolve_cover_url
 from app.services.health import check_account_health
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
 from app.services.rate_limit import can_post
@@ -63,10 +64,13 @@ def publish_reel(
     video_url: str,
     caption: str = "",
     cover_url: str | None = None,
+    batch_cover_url: str | None = None,
     audio_name: str | None = None,
+    video_index: int | None = None,
 ) -> dict:
     primary, fallback = resolve_post_accounts(db, account)
     caption = (caption or account.default_caption or "")[:INSTAGRAM_CAPTION_MAX]
+    resolved_cover = resolve_cover_url(cover_url, batch_cover_url, video_index=video_index)
 
     for target, is_fallback in ((primary, False), (fallback, True)):
         if not target:
@@ -79,7 +83,7 @@ def publish_reel(
 
         try:
             media_id = client_from_account(target).post_reel(
-                video_url, caption, cover_url=cover_url, audio_name=audio_name
+                video_url, caption, cover_url=resolved_cover, audio_name=audio_name
             )
             _log_post(
                 db, target.id,

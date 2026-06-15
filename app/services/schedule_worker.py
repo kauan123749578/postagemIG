@@ -50,13 +50,18 @@ def _process_due_posts() -> None:
                 db.commit()
                 continue
 
+            batch_cover = ""
+            if item.batch_id and item.batch:
+                batch_cover = getattr(item.batch, "cover_url", "") or ""
+
             try:
                 result = publish_reel(
                     db,
                     account,
                     item.video_url,
                     caption=item.caption,
-                    cover_url=item.cover_url or None,
+                    cover_url=item.cover_url or "",
+                    batch_cover_url=batch_cover,
                 )
                 item.status = "posted"
                 item.media_id = result["media_id"]

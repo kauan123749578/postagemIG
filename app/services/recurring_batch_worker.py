@@ -183,7 +183,8 @@ def _process_recurring_batch(config_id: int) -> None:
         index = config.cycle_video_index
         item = videos[index]
         caption = config.caption or account.default_caption or ""
-        cover_url = item.get("cover_url") or config.cover_url or None
+        item_cover = item.get("cover_url") or ""
+        batch_cover = config.cover_url or ""
 
         config.last_attempt_at = now
         db.commit()
@@ -194,7 +195,9 @@ def _process_recurring_batch(config_id: int) -> None:
                 account,
                 item["video_url"],
                 caption,
-                cover_url=cover_url,
+                cover_url=item_cover,
+                batch_cover_url=batch_cover,
+                video_index=index + 1,
             )
             config = (
                 db.query(RecurringBatchConfig)

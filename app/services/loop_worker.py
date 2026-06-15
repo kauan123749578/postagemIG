@@ -75,11 +75,20 @@ def _process_single_loop(loop_id: int) -> None:
         index = loop.current_index % len(videos)
         item = videos[index]
         video_url = item["video_url"]
-        cover_url = item.get("cover_url") or loop.batch_cover_url or None
+        cover_url = item.get("cover_url") or ""
+        batch_cover = loop.batch_cover_url or ""
         caption = _caption_for_loop(loop, account)
 
         try:
-            result = publish_reel(db, account, video_url, caption, cover_url=cover_url)
+            result = publish_reel(
+                db,
+                account,
+                video_url,
+                caption,
+                cover_url=cover_url,
+                batch_cover_url=batch_cover,
+                video_index=index + 1,
+            )
             media_id = result["media_id"]
             used = result.get("used_fallback")
             loop.last_error = "Contingência usada" if used else ""

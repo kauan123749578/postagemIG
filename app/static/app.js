@@ -418,6 +418,12 @@ function populateAccountSelects() {
   });
 }
 
+function requireCoverUrl(hiddenId, context) {
+  const url = document.getElementById(hiddenId)?.value?.trim();
+  if (!url) throw new Error(`Capa obrigatória: faça upload da capa do ${context} antes de continuar`);
+  return url;
+}
+
 function setCoverPreview(previewId, hiddenId, url) {
   const wrap = document.getElementById(previewId);
   const hidden = document.getElementById(hiddenId);
@@ -425,7 +431,7 @@ function setCoverPreview(previewId, hiddenId, url) {
   if (wrap) {
     wrap.innerHTML = url
       ? `<img src="${url}" alt="Capa do lote">`
-      : `<span class="hint">Nenhuma capa</span>`;
+      : `<span class="hint">Obrigatória — nenhuma capa</span>`;
   }
 }
 
@@ -630,6 +636,7 @@ async function publishContent(e) {
       });
     } else if (type === "reel") {
       if (!mediaUrl) throw new Error("Selecione um vídeo");
+      if (!coverUrl) throw new Error("Capa obrigatória: envie a imagem de capa do Reel");
       await api("/api/posts/reel", {
         method: "POST",
         body: JSON.stringify({
@@ -697,7 +704,7 @@ function addVideoRow(video = {}, containerId = "video-items") {
       <button type="button" class="btn danger" onclick="this.closest('.video-row').remove()">Remover</button>
     </div>
     <label class="field-label">URL do vídeo<input class="video-url" value="${video.video_url || ""}" placeholder="Preenchido automaticamente após upload"></label>
-    <label class="field-label">URL da capa<input class="cover-url" value="${video.cover_url || ""}" placeholder="Opcional"></label>
+    <label class="field-label">URL da capa<input class="cover-url" value="${video.cover_url || ""}" placeholder="Opcional se houver capa do lote"></label>
     <div class="upload-mini">
       <input type="file" class="video-file" accept="video/*" hidden id="vf-${id}">
       <input type="file" class="cover-file" accept="image/*" hidden id="cf-${id}">
@@ -816,6 +823,7 @@ async function saveLoop(e) {
 async function startLoop() {
   const accountId = document.getElementById("loop-account").value;
   try {
+    requireCoverUrl("loop-cover-url", "loop");
     await saveLoop({ preventDefault: () => {} });
     const res = await api(`/api/loop/${accountId}/start`, { method: "POST" });
     toast(res.message);
@@ -1144,6 +1152,7 @@ async function startRecurringBatch() {
   const accountId = document.getElementById("recurring-account").value
     || document.getElementById("loop-account").value;
   try {
+    requireCoverUrl("recurring-cover-url", "lote recorrente");
     await saveRecurringBatch({ preventDefault: () => {} });
     const duration = +document.getElementById("recurring-duration").value;
     const res = await api(`/api/recurring-batch/${accountId}/start`, {
@@ -1316,6 +1325,12 @@ function toIsoLocal(dtLocal) {
 async function submitSchedule(e) {
   e.preventDefault();
   if (!scheduleBatch.length) return toast("Envie pelo menos 1 vídeo", "error");
+
+  try {
+    requireCoverUrl("sch-cover-url", "agendamento");
+  } catch (err) {
+    return toast(err.message, "error");
+  }
 
   const accountId = +document.getElementById("sch-account").value;
   const body = {

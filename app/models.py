@@ -126,6 +126,7 @@ class ScheduledBatch(Base):
     name: Mapped[str] = mapped_column(String(120))
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     fallback_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    cover_url: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     items: Mapped[list["ScheduledPost"]] = relationship(back_populates="batch")

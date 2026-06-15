@@ -108,3 +108,8 @@ def migrate_schema() -> None:
     if recurring_cols and "consecutive_failures" not in recurring_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE recurring_batch_configs ADD COLUMN consecutive_failures INTEGER DEFAULT 0"))
+
+    batch_cols = _table_columns("scheduled_batches")
+    if batch_cols and "cover_url" not in batch_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE scheduled_batches ADD COLUMN cover_url TEXT DEFAULT ''"))
