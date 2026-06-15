@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from app.models import Account, AppSetting
 
 DEFAULTS = {
-    "default_max_posts_per_day": "100",
-    "default_max_posts_per_hour": "25",
+    "default_max_posts_per_day": "0",
+    "default_max_posts_per_hour": "0",
     "default_loop_batch_size": "4",
     "default_loop_interval_seconds": "60",
 }

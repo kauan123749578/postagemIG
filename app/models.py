@@ -29,8 +29,8 @@ class Account(Base):
     graph_api_version: Mapped[str] = mapped_column(String(16), default="v21.0")
     graph_host: Mapped[str] = mapped_column(String(64), default="graph.facebook.com")
 
-    max_posts_per_day: Mapped[int] = mapped_column(Integer, default=100)
-    max_posts_per_hour: Mapped[int] = mapped_column(Integer, default=25)
+    max_posts_per_day: Mapped[int] = mapped_column(Integer, default=0)
+    max_posts_per_hour: Mapped[int] = mapped_column(Integer, default=0)
     default_caption: Mapped[str] = mapped_column(Text, default="")
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -120,8 +120,8 @@ class AccountCreate(BaseModel):
     proxy_url: str = ""
     graph_api_version: str = "v21.0"
     graph_host: str = "graph.facebook.com"
-    max_posts_per_day: int = Field(default=100, ge=1, le=500)
-    max_posts_per_hour: int = Field(default=25, ge=1, le=100)
+    max_posts_per_day: int = Field(default=0, ge=0, le=500)
+    max_posts_per_hour: int = Field(default=0, ge=0, le=100)
     default_caption: str = ""
     is_active: bool = True
     fallback_account_id: int | None = None
@@ -135,8 +135,8 @@ class AccountUpdate(BaseModel):
     proxy_url: str | None = None
     graph_api_version: str | None = None
     graph_host: str | None = None
-    max_posts_per_day: int | None = Field(default=None, ge=1, le=500)
-    max_posts_per_hour: int | None = Field(default=None, ge=1, le=100)
+    max_posts_per_day: int | None = Field(default=None, ge=0, le=500)
+    max_posts_per_hour: int | None = Field(default=None, ge=0, le=100)
     default_caption: str | None = None
     is_active: bool | None = None
     fallback_account_id: int | None = None
@@ -192,8 +192,8 @@ class PostStoryRequest(BaseModel):
 
 
 class AppSettingsUpdate(BaseModel):
-    default_max_posts_per_day: int = Field(ge=1, le=500)
-    default_max_posts_per_hour: int = Field(ge=1, le=100)
+    default_max_posts_per_day: int = Field(ge=0, le=500)
+    default_max_posts_per_hour: int = Field(ge=0, le=100)
     default_loop_batch_size: int = Field(ge=1, le=50)
     default_loop_interval_seconds: int = Field(ge=0, le=3600)
 
@@ -507,8 +507,8 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
         proxy_url=body.proxy_url,
         graph_api_version=body.graph_api_version,
         graph_host=body.graph_host,
-        max_posts_per_day=body.max_posts_per_day or int(defaults["default_max_posts_per_day"]),
-        max_posts_per_hour=body.max_posts_per_hour or int(defaults["default_max_posts_per_hour"]),
+        max_posts_per_day=body.max_posts_per_day if body.max_posts_per_day is not None else int(defaults["default_max_posts_per_day"]),
+        max_posts_per_hour=body.max_posts_per_hour if body.max_posts_per_hour is not None else int(defaults["default_max_posts_per_hour"]),
         default_caption=body.default_caption[:INSTAGRAM_CAPTION_MAX],
         is_active=body.is_active,
         fallback_account_id=body.fallback_account_id,

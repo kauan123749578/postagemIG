@@ -16,9 +16,10 @@
 <section class="card glass glow">
   <form id="settings-form" onsubmit="saveSettings(event)">
     <div class="row">
-      <label class="field-label">Padrão posts/dia<input type="number" id="default_max_posts_per_day" min="1" max="500" required></label>
-      <label class="field-label">Padrão posts/hora<input type="number" id="default_max_posts_per_hour" min="1" max="100" required></label>
+      <label class="field-label">Padrão posts/dia<input type="number" id="default_max_posts_per_day" min="0" max="500" required title="0 = ilimitado"></label>
+      <label class="field-label">Padrão posts/hora<input type="number" id="default_max_posts_per_hour" min="0" max="100" required title="0 = ilimitado"></label>
     </div>
+    <p class="hint"><strong>0 = ilimitado</strong> no painel (a Meta ainda impõe ~100 posts/24h por conta).</p>
     <div class="row">
       <label class="field-label">Padrão tamanho do lote<input type="number" id="default_loop_batch_size" min="1" max="50" required></label>
       <label class="field-label">Padrão intervalo (seg)<input type="number" id="default_loop_interval_seconds" min="0" max="3600" required></label>

@@ -397,7 +397,7 @@ function renderAccountsList() {
     <div class="account-item">
       <div>
         <strong>${a.name}</strong> @${a.username || "—"}
-        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.posts_last_24h}/${a.max_posts_per_day}d | Proxy: ${a.proxy_url ? "sim" : "não"}</div>
+        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.unlimited_day ? `${a.usage.posts_last_24h}d ∞` : `${a.usage.posts_last_24h}/${a.max_posts_per_day}d`} | Proxy: ${a.proxy_url ? "sim" : "não"}</div>
       </div>
       <div class="actions">
         <button class="btn secondary" onclick="editAccount(${a.id})">Editar</button>
@@ -850,7 +850,7 @@ function recurringStatusBadge(data) {
     rodando: { cls: "running", label: "Rodando" },
     aguardando_ciclo: { cls: "waiting", label: "Aguardando próximo ciclo" },
     aguardando_intervalo: { cls: "waiting", label: "Intervalo entre vídeos" },
-    limite_api: { cls: "limit", label: "Limite da API" },
+    limite_api: { cls: "limit", label: "Limite do painel" },
     erro_video: { cls: "limit", label: "Erro no vídeo" },
     parado: { cls: "stopped", label: "Parado" },
   };
@@ -865,7 +865,15 @@ function formatDurationMinutes(mins) {
   return h ? `${h}h ${m}min` : `${m}min`;
 }
 
-function formatCountdown(iso) {
+function formatUsageLimit(used, max, unlimited) {
+  if (unlimited || max === 0) return `${used} / ∞`;
+  return `${used} / ${max}`;
+}
+
+function formatUsageRemaining(remaining, max, unlimited) {
+  if (unlimited || max === 0) return "ilimitado";
+  return `${remaining} restantes`;
+}
   if (!iso) return "—";
   const diff = new Date(iso) - Date.now();
   if (diff <= 0) return "em breve";
@@ -959,14 +967,14 @@ function renderRecurringStatus(data) {
         <div class="sub">${data.ends_at ? `Termina ${formatDateTime(data.ends_at)}` : "Não agendado"}</div>
       </div>
       <div class="batch-monitor-stat">
-        <div class="label">Limite / hora</div>
-        <div class="value">${usage.posts_last_hour ?? 0} / ${usage.max_per_hour ?? "—"}</div>
-        <div class="sub">${usage.remaining_hour ?? "—"} restantes na hora</div>
+        <div class="label">Limite / hora (painel)</div>
+        <div class="value">${formatUsageLimit(usage.posts_last_hour ?? 0, usage.max_per_hour ?? 0, usage.unlimited_hour)}</div>
+        <div class="sub">${formatUsageRemaining(usage.remaining_hour, usage.max_per_hour, usage.unlimited_hour)} na hora</div>
       </div>
       <div class="batch-monitor-stat">
-        <div class="label">Limite / dia</div>
-        <div class="value">${usage.posts_last_24h ?? 0} / ${usage.max_per_day ?? "—"}</div>
-        <div class="sub">${usage.remaining_day ?? "—"} restantes no dia</div>
+        <div class="label">Limite / dia (painel)</div>
+        <div class="value">${formatUsageLimit(usage.posts_last_24h ?? 0, usage.max_per_day ?? 0, usage.unlimited_day)}</div>
+        <div class="sub">${formatUsageRemaining(usage.remaining_day, usage.max_per_day, usage.unlimited_day)} no dia</div>
       </div>
     </div>
     <div class="batch-monitor-progress">
