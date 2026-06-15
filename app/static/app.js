@@ -95,9 +95,10 @@ function renderChart(canvasId, config, chartRef) {
 }
 
 async function loadDashboard() {
-  const data = await api("/api/dashboard");
   const grid = document.getElementById("stats-grid");
   if (!grid) return;
+  try {
+  const data = await api("/api/dashboard");
 
   grid.innerHTML = `
     <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Contas</div></div>
@@ -195,7 +196,7 @@ async function loadDashboard() {
         <td>${healthBadge(a.health_status)}</td>
         <td>${a.profile_views.toLocaleString()}</td>
         <td>${a.total_reach.toLocaleString()}</td>
-        <td>${a.usage.posts_last_24h}/${a.max_posts_per_day}</td>
+        <td>${formatUsageLimit(a.usage.posts_last_24h, a.max_posts_per_day, a.usage.unlimited_day)}</td>
         <td>${a.loop_running ? '<span class="badge running">Ativo</span>' : "Parado"} (${a.loop_posts})</td>
         <td>${fallback}</td>
         <td>${a.proxy_url ? "✓" : "—"}</td>
@@ -217,6 +218,11 @@ async function loadDashboard() {
         <span class="status-badge ${p.status === "success" ? "posted" : p.status}">${p.status === "success" ? "OK" : "Erro"}</span>
       </div>
     `).join("") : "<p class='hint'>Nenhuma publicação ainda — publique em Publicar, inicie um Loop ou agende vídeos</p>";
+  }
+  } catch (err) {
+    console.error("Dashboard:", err);
+    grid.innerHTML = `<div class="stat-card"><div class="value">!</div><div class="label">Erro: ${err.message}</div></div>`;
+    toast(err.message || "Erro ao carregar dashboard", "error");
   }
 }
 
@@ -892,6 +898,8 @@ function formatUsageRemaining(remaining, max, unlimited) {
   if (unlimited || max === 0) return "ilimitado";
   return `${remaining} restantes`;
 }
+
+function formatCountdown(iso) {
   if (!iso) return "—";
   const diff = new Date(iso) - Date.now();
   if (diff <= 0) return "em breve";
