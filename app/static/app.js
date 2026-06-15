@@ -111,9 +111,19 @@ async function loadDashboard() {
   const storageBanner = document.getElementById("storage-banner");
   if (storageBanner && data.storage) {
     const s = data.storage;
-    if (s.database_type === "postgresql" && s.database_connected) {
+    if (s.recovery?.recovered) {
       storageBanner.className = "notice notice-info";
-      storageBanner.innerHTML = `<strong>PostgreSQL conectado</strong> (${s.database_host || "Railway"}) — contas, agendamentos e logs persistem no banco.${s.persistent_volume ? ` Vídeos em <code>${s.data_dir}</code>.` : " <strong>Monte volume /data</strong> no serviço postagemIG para não perder vídeos."}`;
+      storageBanner.innerHTML = `<strong>Dados recuperados do backup SQLite!</strong> ${s.recovery.total_rows} registros restaurados no Postgres.`;
+      storageBanner.classList.remove("hidden");
+    } else if (s.database_type === "postgresql" && s.database_connected) {
+      storageBanner.className = s.accounts_count === 0 ? "notice notice-warning" : "notice notice-info";
+      let msg = `<strong>PostgreSQL conectado</strong> (${s.database_host || "Railway"}) — <strong>${s.accounts_count}</strong> conta(s), <strong>${s.post_logs_count || 0}</strong> logs.`;
+      if (s.video_files) msg += ` ${s.video_files} vídeo(s) no volume.`;
+      else msg += " <strong>Volume /data sem vídeos</strong> — reenvie mídia se necessário.";
+      if (s.accounts_count === 0 && s.sqlite_backup?.accounts > 0) {
+        msg += ` <button type="button" class="btn secondary" style="margin-left:8px" onclick="runDbRecovery()">Recuperar ${s.sqlite_backup.accounts} conta(s) do backup</button>`;
+      }
+      storageBanner.innerHTML = msg;
       storageBanner.classList.remove("hidden");
     } else if (s.persistent_volume && s.writable && s.database_ok) {
       storageBanner.className = "notice notice-info";
@@ -1535,4 +1545,50 @@ async function saveSettings(e) {
   } catch (err) {
     toast(err.message, "error");
   }
+}
+
+async function runDbRecovery() {
+  if (!confirm("Recuperar contas, loops e logs do backup SQLite no volume /data?")) return;
+  try {
+    const res = await api("/api/recovery/sqlite", { method: "POST" });
+    toast(`Recuperado: ${res.total_rows} registros`);
+    location.reload();
+  } catch (err) {
+    toast(err.message || "Falha na recuperação", "error");
+  }
+}
+
+async function loadGlobalDbBanner() {
+  const el = document.getElementById("global-db-banner");
+  if (!el) return;
+  try {
+    const data = await api("/api/storage");
+    if (data.recovery?.recovered) {
+      el.className = "notice notice-info";
+      el.innerHTML = `<strong>Dados recuperados!</strong> ${data.recovery.total_rows} registros restaurados do backup SQLite.`;
+      el.classList.remove("hidden");
+      return;
+    }
+    if (data.warning) {
+      el.className = "notice notice-warning";
+      let html = `<strong>Atenção:</strong> ${data.warning}`;
+      if (data.sqlite_backup?.accounts > 0 && data.accounts_count === 0) {
+        html += ` <button type="button" class="btn secondary" style="margin-left:8px" onclick="runDbRecovery()">Recuperar agora</button>`;
+      }
+      el.innerHTML = html;
+      el.classList.remove("hidden");
+      return;
+    }
+    if (data.database_connected && data.accounts_count === 0) {
+      el.className = "notice notice-warning";
+      el.innerHTML = `<strong>Painel vazio:</strong> 0 contas no ${data.database_type}. Se tinha dados antes, o volume Postgres pode ter sido recriado na Railway.`;
+      el.classList.remove("hidden");
+    }
+  } catch { /* login page */ }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", loadGlobalDbBanner);
+} else {
+  loadGlobalDbBanner();
 }

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import APP_BASE_URL, IMAGES_DIR, VIDEOS_DIR
 from app.database import Base, SessionLocal, engine, get_db, migrate_schema
+from app.services.db_recovery import LAST_RECOVERY, recover_sqlite_to_postgres, sqlite_backup_info
 from app.models import AdminUser
 from app.models import Account, LoopConfig, PostLog, RecurringBatchConfig, ScheduledBatch, ScheduledPost
 from app.services.auth import (
@@ -58,10 +59,15 @@ async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     migrate_schema()
     db = SessionLocal()
+    recovery = {"recovered": False}
     try:
+        recovery = recover_sqlite_to_postgres(db)
+        if recovery.get("recovered"):
+            logging.info("Dados recuperados do SQLite: %s", recovery)
         ensure_admin(db)
     finally:
         db.close()
+    app.state.db_recovery = recovery
     start_loop_worker()
     start_schedule_worker()
     start_recurring_batch_worker()
@@ -404,18 +410,27 @@ def media_page(request: Request):
 
 
 @app.get("/api/health")
-def health_check():
-    storage = get_storage_status()
+def health_check(db: Session = Depends(get_db)):
+    storage = get_storage_status(db)
     return {
         "status": "ok",
         "base_url": APP_BASE_URL,
         "storage": storage,
+        "recovery": LAST_RECOVERY,
     }
 
 
 @app.get("/api/storage")
-def storage_status():
-    return get_storage_status()
+def storage_status(db: Session = Depends(get_db)):
+    return {**get_storage_status(db), "recovery": LAST_RECOVERY}
+
+
+@app.post("/api/recovery/sqlite")
+def run_sqlite_recovery(db: Session = Depends(get_db)):
+    result = recover_sqlite_to_postgres(db)
+    if result.get("recovered"):
+        return {"ok": True, **result, "storage": get_storage_status(db)}
+    raise HTTPException(400, result.get("error") or result.get("reason", "Não foi possível recuperar"))
 
 
 @app.get("/api/me")
@@ -1176,7 +1191,7 @@ def dashboard_data(db: Session = Depends(get_db)):
         "running_recurring": running_recurring,
         "pending_schedule": pending_schedule,
         "app_base_url": APP_BASE_URL,
-        "storage": get_storage_status(),
+        "storage": get_storage_status(db),
         "accounts": [_account_dict(a, db) for a in accounts],
         "chart": {"labels": chart_days, "success": chart_success, "errors": chart_errors},
         "schedule_stats": schedule_stats,
