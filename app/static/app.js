@@ -842,20 +842,172 @@ function getRecurringVideos() {
   })).filter(v => v.video_url);
 }
 
+function recurringStatusBadge(data) {
+  const map = {
+    rodando: { cls: "running", label: "Rodando" },
+    aguardando_ciclo: { cls: "waiting", label: "Aguardando próximo ciclo" },
+    aguardando_intervalo: { cls: "waiting", label: "Intervalo entre vídeos" },
+    limite_api: { cls: "limit", label: "Limite da API" },
+    parado: { cls: "stopped", label: "Parado" },
+  };
+  const item = map[data.status_label] || map[data.is_running ? "rodando" : "parado"];
+  return `<span class="batch-monitor-badge ${item.cls}">${item.label}</span>`;
+}
+
+function formatDurationMinutes(mins) {
+  if (mins == null) return "—";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h}h ${m}min` : `${m}min`;
+}
+
+function formatCountdown(iso) {
+  if (!iso) return "—";
+  const diff = new Date(iso) - Date.now();
+  if (diff <= 0) return "em breve";
+  const mins = Math.ceil(diff / 60000);
+  return `~${formatDurationMinutes(mins)}`;
+}
+
+function renderRecurringActiveList(batches, selectedAccountId) {
+  const panel = document.getElementById("recurring-active-panel");
+  const list = document.getElementById("recurring-active-list");
+  if (!panel || !list) return;
+
+  if (!batches.length) {
+    panel.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  list.innerHTML = batches.map(b => `
+    <div class="batch-active-card ${String(b.account_id) === String(selectedAccountId) ? "selected" : ""}"
+         onclick="selectRecurringBatch(${b.account_id})">
+      <div class="card-top">
+        <div>
+          <div class="card-title">${b.name || "Lote recorrente"}</div>
+          <div class="card-account">${b.account_name}${b.account_username ? ` · @${b.account_username}` : ""}</div>
+        </div>
+        ${recurringStatusBadge(b)}
+      </div>
+      <div class="mini-progress"><span style="width:${b.cycle_progress_percent || 0}%"></span></div>
+      <div class="card-meta">
+        <div><strong>${b.posts_in_current_cycle || 0}/${b.video_count || 0}</strong> vídeos no ciclo</div>
+        <div><strong>${b.cycles_completed || 0}</strong> ciclos feitos</div>
+        <div><strong>${b.total_posts || 0}</strong> posts totais</div>
+        <div><strong>${formatDurationMinutes(b.remaining_minutes)}</strong> restantes</div>
+      </div>
+    </div>
+  `).join("");
+}
+
 function renderRecurringStatus(data) {
   const status = document.getElementById("recurring-status");
   if (!status) return;
-  const lines = [
-    `Status: ${data.is_running ? "RODANDO" : "Parado"}`,
-    `Duração: ${data.duration_hours}h | Intervalo entre lotes: ${data.cycle_interval_hours}h`,
-    `Ciclos completos: ${data.cycles_completed || 0} | Total posts: ${data.total_posts || 0}`,
-  ];
-  if (data.is_running && data.remaining_minutes != null) {
-    lines.push(`Tempo restante: ~${Math.floor(data.remaining_minutes / 60)}h ${data.remaining_minutes % 60}min`);
+
+  if (!data.account_id && !data.is_running && !(data.videos || []).length) {
+    status.innerHTML = `<div class="batch-monitor-empty">Configure e inicie o lote recorrente</div>`;
+    return;
   }
-  if (data.ends_at) lines.push(`Termina em: ${formatDateTime(data.ends_at)}`);
-  lines.push(`Último erro: ${data.last_error || "nenhum"}`);
-  status.textContent = lines.join("\n");
+
+  const usage = data.usage || {};
+  const durationUsed = data.started_at && data.ends_at
+    ? Math.max(0, Math.min(100, Math.round(((Date.now() - new Date(data.started_at)) / (new Date(data.ends_at) - new Date(data.started_at))) * 100)))
+    : 0;
+
+  let alertHtml = "";
+  if (data.last_error) {
+    const isLimit = data.last_error.startsWith("Aguardando limite");
+    const cls = isLimit ? "warn" : "error";
+    alertHtml = `<div class="batch-monitor-alert ${cls}">${data.last_error}</div>`;
+  } else if (data.is_running && data.current_video_label) {
+    alertHtml = `<div class="batch-monitor-alert info">${data.current_video_label}</div>`;
+  }
+
+  status.innerHTML = `
+    <div class="batch-monitor-header">
+      <div>
+        <h3 class="batch-monitor-title">${data.name || "Lote recorrente"}</h3>
+        <div class="hint">${data.account_name || "Conta"}${data.account_username ? ` · @${data.account_username}` : ""}</div>
+      </div>
+      ${recurringStatusBadge(data)}
+    </div>
+    <div class="batch-monitor-grid">
+      <div class="batch-monitor-stat">
+        <div class="label">Ciclo atual</div>
+        <div class="value">${data.posts_in_current_cycle || 0} / ${data.video_count || 0}</div>
+        <div class="sub">vídeos publicados neste lote</div>
+      </div>
+      <div class="batch-monitor-stat">
+        <div class="label">Ciclos completos</div>
+        <div class="value">${data.cycles_completed || 0}</div>
+        <div class="sub">lotes inteiros finalizados</div>
+      </div>
+      <div class="batch-monitor-stat">
+        <div class="label">Total de posts</div>
+        <div class="value">${data.total_posts || 0}</div>
+        <div class="sub">desde o início desta execução</div>
+      </div>
+      <div class="batch-monitor-stat">
+        <div class="label">Tempo restante</div>
+        <div class="value">${data.is_running ? formatDurationMinutes(data.remaining_minutes) : "—"}</div>
+        <div class="sub">${data.ends_at ? `Termina ${formatDateTime(data.ends_at)}` : "Não agendado"}</div>
+      </div>
+      <div class="batch-monitor-stat">
+        <div class="label">Limite / hora</div>
+        <div class="value">${usage.posts_last_hour ?? 0} / ${usage.max_per_hour ?? "—"}</div>
+        <div class="sub">${usage.remaining_hour ?? "—"} restantes na hora</div>
+      </div>
+      <div class="batch-monitor-stat">
+        <div class="label">Limite / dia</div>
+        <div class="value">${usage.posts_last_24h ?? 0} / ${usage.max_per_day ?? "—"}</div>
+        <div class="sub">${usage.remaining_day ?? "—"} restantes no dia</div>
+      </div>
+    </div>
+    <div class="batch-monitor-progress">
+      <div class="progress-label">
+        <span>Progresso do ciclo atual</span>
+        <strong>${data.cycle_progress_percent || 0}%</strong>
+      </div>
+      <div class="batch-progress-bar"><span style="width:${data.cycle_progress_percent || 0}%"></span></div>
+    </div>
+    <div class="batch-monitor-progress">
+      <div class="progress-label">
+        <span>Duração total da execução</span>
+        <strong>${durationUsed}% · ${data.duration_hours || 0}h configuradas</strong>
+      </div>
+      <div class="batch-progress-bar"><span style="width:${durationUsed}%"></span></div>
+    </div>
+    <div class="batch-monitor-footer">
+      <div class="batch-monitor-row">
+        <span><strong>Intervalo entre lotes:</strong> ${data.cycle_interval_hours || 1}h</span>
+        <span><strong>Intervalo entre vídeos:</strong> ${data.video_interval_seconds || 0}s</span>
+        <span><strong>Próximo vídeo:</strong> ${data.waiting_for_video ? formatCountdown(data.next_post_at) : (data.is_running ? "pronto" : "—")}</span>
+        <span><strong>Próximo ciclo:</strong> ${data.waiting_for_cycle ? formatCountdown(data.next_cycle_at) : (data.is_running ? "após completar o lote" : "—")}</span>
+      </div>
+      ${alertHtml}
+    </div>
+  `;
+}
+
+async function loadRecurringActiveBatches() {
+  try {
+    const batches = await api("/api/recurring-batches/active");
+    const accountId = document.getElementById("recurring-account")?.value
+      || document.getElementById("loop-account")?.value;
+    renderRecurringActiveList(batches, accountId);
+  } catch { /* ignore */ }
+}
+
+function selectRecurringBatch(accountId) {
+  const recurringSel = document.getElementById("recurring-account");
+  const loopSel = document.getElementById("loop-account");
+  if (recurringSel) recurringSel.value = accountId;
+  if (loopSel) loopSel.value = accountId;
+  setLoopMode("recurring");
+  loadRecurringConfig(true);
+  loadRecurringActiveBatches();
 }
 
 async function refreshRecurringStatus() {
@@ -865,6 +1017,7 @@ async function refreshRecurringStatus() {
   try {
     const data = await api(`/api/recurring-batch/${accountId}`);
     renderRecurringStatus(data);
+    loadRecurringActiveBatches();
   } catch { /* ignore polling errors */ }
 }
 
@@ -881,6 +1034,7 @@ async function loadRecurringConfig(force = false) {
 
   const data = await api(`/api/recurring-batch/${accountId}`);
   renderRecurringStatus(data);
+  loadRecurringActiveBatches();
 
   if (!force && formHasFocus("recurring-form")) return;
 

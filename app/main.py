@@ -798,18 +798,74 @@ def stop_loop(account_id: int, db: Session = Depends(get_db)):
     return {"is_running": False}
 
 
-def _recurring_dict(config: RecurringBatchConfig) -> dict:
+def _recurring_dict(config: RecurringBatchConfig, db: Session) -> dict:
     now = datetime.now(timezone.utc)
-    ends_at = config.ends_at
-    if ends_at and ends_at.tzinfo is None:
-        ends_at = ends_at.replace(tzinfo=timezone.utc)
+    ends_at = _normalize_recurring_dt(config.ends_at)
+    started_at = _normalize_recurring_dt(config.started_at)
     remaining = None
     if config.is_running and ends_at:
         remaining = max(0, int((ends_at - now).total_seconds() // 60))
+
+    account = db.get(Account, config.account_id)
+    videos = json.loads(config.videos_json or "[]")
+    video_count = len(videos)
+    cycle_index = config.cycle_video_index or 0
+    posts_in_cycle = cycle_index if video_count else 0
+    cycle_progress = int((posts_in_cycle / video_count) * 100) if video_count else 0
+
+    next_cycle_at = None
+    waiting_for_cycle = False
+    if config.is_running and cycle_index == 0 and config.last_cycle_at:
+        last_cycle = _normalize_recurring_dt(config.last_cycle_at)
+        if last_cycle:
+            next_cycle_at = last_cycle + timedelta(hours=config.cycle_interval_hours)
+            waiting_for_cycle = now < next_cycle_at
+
+    next_post_at = None
+    waiting_for_video = False
+    if (
+        config.is_running
+        and config.last_post_at
+        and config.video_interval_seconds > 0
+        and cycle_index > 0
+        and not waiting_for_cycle
+    ):
+        last_post = _normalize_recurring_dt(config.last_post_at)
+        if last_post:
+            next_post_at = last_post + timedelta(seconds=config.video_interval_seconds)
+            waiting_for_video = now < next_post_at
+
+    usage = {}
+    if account:
+        usage = usage_stats(db, account.id, account.max_posts_per_day, account.max_posts_per_hour)
+
+    current_video_label = ""
+    if video_count and config.is_running:
+        if waiting_for_cycle:
+            current_video_label = f"Aguardando próximo ciclo (lote completo: {video_count} vídeos)"
+        elif cycle_index < video_count:
+            current_video_label = f"Próximo: vídeo {cycle_index + 1} de {video_count}"
+        else:
+            current_video_label = f"Ciclo concluído — {video_count} vídeos"
+
+    status_label = "rodando"
+    if not config.is_running:
+        status_label = "parado"
+    elif waiting_for_cycle:
+        status_label = "aguardando_ciclo"
+    elif waiting_for_video:
+        status_label = "aguardando_intervalo"
+    elif config.last_error and config.last_error.startswith("Aguardando limite"):
+        status_label = "limite_api"
+
     return {
+        "id": config.id,
         "account_id": config.account_id,
+        "account_name": account.name if account else "",
+        "account_username": account.username if account else "",
         "name": config.name,
-        "videos": json.loads(config.videos_json or "[]"),
+        "videos": videos,
+        "video_count": video_count,
         "caption": config.caption,
         "fallback_account_id": config.fallback_account_id,
         "cover_url": config.cover_url or "",
@@ -817,17 +873,53 @@ def _recurring_dict(config: RecurringBatchConfig) -> dict:
         "cycle_interval_hours": config.cycle_interval_hours,
         "video_interval_seconds": config.video_interval_seconds,
         "is_running": config.is_running,
-        "started_at": config.started_at.isoformat() if config.started_at else None,
-        "ends_at": config.ends_at.isoformat() if config.ends_at else None,
+        "status_label": status_label,
+        "started_at": started_at.isoformat() if started_at else None,
+        "ends_at": ends_at.isoformat() if ends_at else None,
+        "last_post_at": config.last_post_at.isoformat() if config.last_post_at else None,
+        "last_cycle_at": config.last_cycle_at.isoformat() if config.last_cycle_at else None,
         "cycles_completed": config.cycles_completed,
         "total_posts": config.total_posts,
-        "cycle_video_index": config.cycle_video_index,
+        "cycle_video_index": cycle_index,
+        "posts_in_current_cycle": posts_in_cycle,
+        "cycle_progress_percent": cycle_progress,
+        "current_video_label": current_video_label,
+        "next_cycle_at": next_cycle_at.isoformat() if next_cycle_at else None,
+        "next_post_at": next_post_at.isoformat() if next_post_at else None,
+        "waiting_for_cycle": waiting_for_cycle,
+        "waiting_for_video": waiting_for_video,
         "last_error": config.last_error,
         "remaining_minutes": remaining,
+        "usage": usage,
     }
 
 
+def _normalize_recurring_dt(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # --- API: Recurring Batch ---
+
+@app.get("/api/recurring-batches/active")
+def list_active_recurring_batches(db: Session = Depends(get_db)):
+    configs = (
+        db.query(RecurringBatchConfig)
+        .filter(RecurringBatchConfig.is_running.is_(True))
+        .order_by(RecurringBatchConfig.started_at.desc())
+        .all()
+    )
+    return [_recurring_dict(c, db) for c in configs]
+
+
+@app.get("/api/recurring-batches")
+def list_recurring_batches(db: Session = Depends(get_db)):
+    configs = db.query(RecurringBatchConfig).order_by(RecurringBatchConfig.account_id).all()
+    return [_recurring_dict(c, db) for c in configs if json.loads(c.videos_json or "[]")]
+
 
 @app.get("/api/recurring-batch/{account_id}")
 def get_recurring_batch(account_id: int, db: Session = Depends(get_db)):
@@ -847,7 +939,7 @@ def get_recurring_batch(account_id: int, db: Session = Depends(get_db)):
             "total_posts": 0,
             "last_error": "",
         }
-    return _recurring_dict(config)
+    return _recurring_dict(config, db)
 
 
 @app.put("/api/recurring-batch/{account_id}")
@@ -861,15 +953,18 @@ def save_recurring_batch(account_id: int, body: RecurringBatchRequest, db: Sessi
         config = RecurringBatchConfig(account_id=account_id)
         db.add(config)
 
+    new_videos = [v.model_dump() for v in body.videos]
     config.name = body.name
-    config.videos_json = json.dumps([v.model_dump() for v in body.videos])
+    config.videos_json = json.dumps(new_videos)
     config.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
     config.cover_url = body.cover_url
     config.duration_hours = body.duration_hours
     config.cycle_interval_hours = body.cycle_interval_hours
     config.video_interval_seconds = body.video_interval_seconds
+    if config.is_running and len(new_videos) <= config.cycle_video_index:
+        config.cycle_video_index = 0
     db.commit()
-    return _recurring_dict(config)
+    return _recurring_dict(config, db)
 
 
 @app.post("/api/recurring-batch/{account_id}/start")
@@ -890,6 +985,8 @@ def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Sessio
     config.started_at = now
     config.ends_at = now + timedelta(hours=duration)
     config.cycle_video_index = 0
+    config.cycles_completed = 0
+    config.total_posts = 0
     config.last_cycle_at = None
     config.last_post_at = None
     config.last_error = ""
@@ -897,7 +994,7 @@ def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Sessio
     db.refresh(config)
     kick_recurring_batch(config.id)
     return {
-        **_recurring_dict(config),
+        **_recurring_dict(config, db),
         "message": f"Lote recorrente ativo por {duration}h — primeiro lote agora, depois 1 lote a cada {config.cycle_interval_hours}h",
     }
 

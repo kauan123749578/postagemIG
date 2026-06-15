@@ -12,6 +12,8 @@ from app.services.rate_limit import can_post
 
 logger = logging.getLogger("recurring_batch_worker")
 _worker_task: asyncio.Task | None = None
+_config_locks: dict[int, threading.Lock] = {}
+_locks_guard = threading.Lock()
 
 
 def _utcnow() -> datetime:
@@ -26,22 +28,44 @@ def _normalize_dt(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _config_lock(config_id: int) -> threading.Lock:
+    with _locks_guard:
+        if config_id not in _config_locks:
+            _config_locks[config_id] = threading.Lock()
+        return _config_locks[config_id]
+
+
 def _parse_videos(videos_json: str) -> list[dict]:
     try:
         data = json.loads(videos_json or "[]")
         if isinstance(data, list):
-            return [v for v in data if isinstance(v, dict) and v.get("video_url")]
+            seen: set[str] = set()
+            unique: list[dict] = []
+            for v in data:
+                if not isinstance(v, dict):
+                    continue
+                url = (v.get("video_url") or "").strip()
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                unique.append({**v, "video_url": url})
+            return unique
     except json.JSONDecodeError:
         pass
     return []
 
 
 def _process_recurring_batch(config_id: int) -> None:
+    lock = _config_lock(config_id)
+    if not lock.acquire(blocking=False):
+        return
+
     db = SessionLocal()
     try:
         config = (
             db.query(RecurringBatchConfig)
             .filter(RecurringBatchConfig.id == config_id)
+            .with_for_update()
             .first()
         )
         if not config or not config.is_running:
@@ -74,6 +98,9 @@ def _process_recurring_batch(config_id: int) -> None:
             db.commit()
             return
 
+        if config.cycle_video_index >= len(videos):
+            config.cycle_video_index = 0
+
         # Entre lotes: espera o intervalo só após concluir um ciclo completo.
         if config.cycle_video_index == 0 and config.last_cycle_at:
             last_cycle = _normalize_dt(config.last_cycle_at)
@@ -81,7 +108,7 @@ def _process_recurring_batch(config_id: int) -> None:
             if last_cycle and (now - last_cycle).total_seconds() < wait_seconds:
                 return
 
-        # Primeiro vídeo após iniciar não espera intervalo entre vídeos.
+        # Primeiro vídeo após iniciar ou novo ciclo não espera intervalo entre vídeos.
         last_post = _normalize_dt(config.last_post_at)
         if last_post and config.video_interval_seconds > 0 and config.cycle_video_index > 0:
             if (now - last_post).total_seconds() < config.video_interval_seconds:
@@ -95,10 +122,22 @@ def _process_recurring_batch(config_id: int) -> None:
             db.commit()
             return
 
-        index = config.cycle_video_index % len(videos)
+        index = config.cycle_video_index
         item = videos[index]
         caption = config.caption or account.default_caption or ""
         cover_url = item.get("cover_url") or config.cover_url or None
+
+        original_index = index
+        original_cycles = config.cycles_completed
+        original_last_cycle = config.last_cycle_at
+
+        # Reserva o índice antes de publicar para evitar repetição se outro worker tentar.
+        config.cycle_video_index = index + 1
+        if config.cycle_video_index >= len(videos):
+            config.cycle_video_index = 0
+            config.cycles_completed += 1
+            config.last_cycle_at = now
+        db.commit()
 
         try:
             result = publish_reel(
@@ -108,30 +147,38 @@ def _process_recurring_batch(config_id: int) -> None:
                 caption,
                 cover_url=cover_url,
             )
-            config.total_posts += 1
-            config.last_post_at = now
-            config.last_error = "Contingência usada" if result.get("used_fallback") else ""
-            config.cycle_video_index = index + 1
-
-            if config.cycle_video_index >= len(videos):
-                config.cycle_video_index = 0
-                config.cycles_completed += 1
-                config.last_cycle_at = now
+            config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.id == config_id).first()
+            if config:
+                config.total_posts += 1
+                config.last_post_at = now
+                config.last_error = "Contingência usada" if result.get("used_fallback") else ""
+                db.commit()
                 logger.info(
-                    "Lote recorrente conta %s: ciclo %s concluído",
+                    "Lote recorrente conta %s: vídeo %s/%s publicado (ciclo %s)",
                     account.name,
+                    index + 1,
+                    len(videos),
                     config.cycles_completed,
                 )
-
-            db.commit()
         except InstagramAPIError as exc:
-            config.last_error = str(exc)
-            db.commit()
+            config = (
+                db.query(RecurringBatchConfig)
+                .filter(RecurringBatchConfig.id == config_id)
+                .with_for_update()
+                .first()
+            )
+            if config:
+                config.cycle_video_index = original_index
+                config.cycles_completed = original_cycles
+                config.last_cycle_at = original_last_cycle
+                config.last_error = str(exc)
+                db.commit()
     except Exception:
         logger.exception("Erro no lote recorrente %s", config_id)
         db.rollback()
     finally:
         db.close()
+        lock.release()
 
 
 async def _worker_loop() -> None:

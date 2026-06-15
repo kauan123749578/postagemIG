@@ -58,6 +58,14 @@
 </section>
 
 <section id="panel-recurring" class="card glass glow hidden">
+  <div id="recurring-active-panel" class="batch-active-panel hidden">
+    <div class="batch-active-header">
+      <h3>Lotes ativos</h3>
+      <span class="hint">Clique em um lote para editar</span>
+    </div>
+    <div id="recurring-active-list" class="batch-active-grid"></div>
+  </div>
+
   <form id="recurring-form" onsubmit="saveRecurringBatch(event)">
     <label class="field-label">Conta<select id="recurring-account" required></select></label>
     <label class="field-label">Nome do lote<input id="recurring-name" value="Lote recorrente"></label>
@@ -112,7 +120,9 @@
       <button type="button" class="btn danger" onclick="stopRecurringBatch()">Parar</button>
     </div>
   </form>
-  <div id="recurring-status" class="status-box" style="margin-top:20px">Configure e inicie o lote recorrente</div>
+  <div id="recurring-status" class="batch-monitor">
+    <div class="batch-monitor-empty">Configure e inicie o lote recorrente</div>
+  </div>
 </section>
 {% endblock %}
 {% block scripts %}
