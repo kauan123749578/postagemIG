@@ -7,8 +7,10 @@ from datetime import datetime, timedelta, timezone
 from app.database import SessionLocal
 from app.models import Account, RecurringBatchConfig
 from app.services.instagram import InstagramAPIError
+from app.services.meta_throttle import check_publish_allowed
 from app.services.publisher import publish_reel, resolve_post_accounts
 from app.services.rate_limit import can_post
+from app.services.video_list import parse_videos_json
 
 logger = logging.getLogger("recurring_batch_worker")
 _worker_task: asyncio.Task | None = None
@@ -39,24 +41,7 @@ def _config_lock(config_id: int) -> threading.Lock:
 
 
 def _parse_videos(videos_json: str) -> list[dict]:
-    try:
-        data = json.loads(videos_json or "[]")
-        if isinstance(data, list):
-            seen: set[str] = set()
-            unique: list[dict] = []
-            for v in data:
-                if not isinstance(v, dict):
-                    continue
-                url = (v.get("video_url") or "").strip()
-                if not url or url in seen:
-                    continue
-                seen.add(url)
-                cover = (v.get("cover_url") or "").strip()
-                unique.append({**v, "video_url": url, "cover_url": cover})
-            return unique
-    except json.JSONDecodeError:
-        pass
-    return []
+    return parse_videos_json(videos_json)
 
 
 def _wait_seconds(config: RecurringBatchConfig, now: datetime) -> int | None:
@@ -180,6 +165,12 @@ def _process_recurring_batch(config_id: int) -> None:
             db.commit()
             return
 
+        allowed_global, global_reason, _ = check_publish_allowed()
+        if not allowed_global:
+            config.last_error = global_reason
+            db.commit()
+            return
+
         index = config.cycle_video_index
         item = videos[index]
         caption = config.caption or account.default_caption or ""
@@ -264,6 +255,8 @@ async def _worker_loop() -> None:
 
         for config_id in config_ids:
             await asyncio.to_thread(_process_recurring_batch, config_id)
+            if len(config_ids) > 1:
+                await asyncio.sleep(2)
 
         await asyncio.sleep(5)
 

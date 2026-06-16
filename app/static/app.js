@@ -137,6 +137,16 @@ async function loadDashboard() {
     }
   }
 
+  if (data.meta_throttle && !data.meta_throttle.publish_allowed) {
+    const banner = document.getElementById("storage-banner") || document.getElementById("global-db-banner");
+    if (banner) {
+      banner.className = "notice notice-warning";
+      const mins = data.meta_throttle.wait_seconds ? Math.ceil(data.meta_throttle.wait_seconds / 60) : 0;
+      banner.innerHTML = `<strong>Limite da API Meta (app)</strong> — ${data.meta_throttle.wait_reason || "publicações pausadas temporariamente"}${mins ? ` (~${mins} min)` : ""}. Reduza loops simultâneos ou aumente o intervalo entre vídeos (120s+).`;
+      banner.classList.remove("hidden");
+    }
+  }
+
   postsChart = renderChart("posts-chart", {
     type: "bar",
     data: {
@@ -707,6 +717,37 @@ function initPublishPage() {
 
 let videoRowCounter = 0;
 
+function getLoopVideos() {
+  return [...document.querySelectorAll("#video-items .video-row")].map(row => ({
+    video_url: row.querySelector(".video-url").value.trim(),
+    cover_url: row.querySelector(".cover-url").value.trim(),
+  })).filter(v => v.video_url);
+}
+
+function removeVideoRow(btn, containerId) {
+  btn.closest(".video-row")?.remove();
+  renumberVideoRows(containerId);
+  maybeAutoSaveBatch(containerId);
+}
+
+function renumberVideoRows(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  [...container.querySelectorAll(".video-row")].forEach((row, idx) => {
+    const title = row.querySelector(".video-row-header strong");
+    if (title) title.textContent = `Vídeo #${idx + 1}`;
+  });
+}
+
+function clearVideoList(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (container.children.length && !confirm("Remover todos os vídeos desta lista?")) return;
+  container.innerHTML = "";
+  if (containerId === "recurring-video-items") saveRecurringBatchSilent(true);
+  else saveLoopConfigSilent(true);
+}
+
 function addVideoRow(video = {}, containerId = "video-items") {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -717,7 +758,7 @@ function addVideoRow(video = {}, containerId = "video-items") {
   row.innerHTML = `
     <div class="video-row-header">
       <strong>Vídeo #${container.children.length + 1}</strong>
-      <button type="button" class="btn danger" onclick="this.closest('.video-row').remove()">Remover</button>
+      <button type="button" class="btn danger" onclick="removeVideoRow(this, '${containerId}')">Remover</button>
     </div>
     <label class="field-label">URL do vídeo<input class="video-url" value="${video.video_url || ""}" placeholder="Preenchido automaticamente após upload"></label>
     <label class="field-label">URL da capa<input class="cover-url" value="${video.cover_url || ""}" placeholder="Opcional se houver capa do lote"></label>
@@ -750,7 +791,14 @@ function addVideoRow(video = {}, containerId = "video-items") {
   });
 }
 
-async function bulkUploadToLoop(files, containerId = "video-items") {
+async function bulkUploadToLoop(files, containerId = "video-items", replace = true) {
+  if (!files.length) return;
+  const container = document.getElementById(containerId);
+  if (replace && container?.children.length) {
+    const label = containerId === "recurring-video-items" ? "lote recorrente" : "loop";
+    if (!confirm(`Substituir todos os vídeos do ${label} pelos ${files.length} novo(s)?`)) return;
+    container.innerHTML = "";
+  }
   toast(`Enviando ${files.length} vídeo(s)...`);
   let ok = 0;
   for (const file of files) {
@@ -760,8 +808,20 @@ async function bulkUploadToLoop(files, containerId = "video-items") {
       ok++;
     } catch { /* continue */ }
   }
-  toast(`${ok} vídeo(s) adicionados`);
+  toast(`${ok} vídeo(s) ${replace ? "substituídos" : "adicionados"}`);
   maybeAutoSaveBatch(containerId);
+}
+
+function bulkUploadFromInput(inputId, containerId, replace = false) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const handler = () => {
+    if (input.files?.length) bulkUploadToLoop([...input.files], containerId, replace);
+    input.value = "";
+    input.removeEventListener("change", handler);
+  };
+  input.addEventListener("change", handler);
+  input.click();
 }
 
 function formHasFocus(formId) {
@@ -815,10 +875,7 @@ async function loadLoopConfig(force = false) {
 async function saveLoop(e) {
   if (e?.preventDefault) e.preventDefault();
   const accountId = document.getElementById("loop-account").value;
-  const videos = [...document.querySelectorAll(".video-row")].map(row => ({
-    video_url: row.querySelector(".video-url").value.trim(),
-    cover_url: row.querySelector(".cover-url").value.trim(),
-  })).filter(v => v.video_url);
+  const videos = getLoopVideos();
 
   if (!videos.length) throw new Error("Adicione pelo menos 1 vídeo");
 
@@ -1099,12 +1156,12 @@ function maybeAutoSaveBatch(containerId) {
   if (containerId === "video-items") saveLoopConfigSilent();
 }
 
-async function saveRecurringBatchSilent() {
+async function saveRecurringBatchSilent(allowEmpty = false) {
   const accountId = document.getElementById("recurring-account")?.value
     || document.getElementById("loop-account")?.value;
   if (!accountId) return;
   const videos = getRecurringVideos();
-  if (!videos.length) return;
+  if (!videos.length && !allowEmpty) return;
   try {
     await api(`/api/recurring-batch/${accountId}`, {
       method: "PUT",
@@ -1121,14 +1178,11 @@ async function saveRecurringBatchSilent() {
   } catch { /* auto-save silencioso */ }
 }
 
-async function saveLoopConfigSilent() {
+async function saveLoopConfigSilent(allowEmpty = false) {
   const accountId = document.getElementById("loop-account")?.value;
   if (!accountId) return;
-  const videos = [...document.querySelectorAll("#video-items .video-row")].map(row => ({
-    video_url: row.querySelector(".video-url").value.trim(),
-    cover_url: row.querySelector(".cover-url").value.trim(),
-  })).filter(v => v.video_url);
-  if (!videos.length) return;
+  const videos = getLoopVideos();
+  if (!videos.length && !allowEmpty) return;
   try {
     await api(`/api/loop/${accountId}`, {
       method: "PUT",
@@ -1197,8 +1251,8 @@ async function initLoopPage() {
   await loadAccounts();
   populateAccountSelects();
 
-  setupDropzone("loop-video-dropzone", "loop-bulk-upload", files => bulkUploadToLoop(files, "video-items"));
-  setupDropzone("recurring-dropzone", "recurring-upload", files => bulkUploadToLoop(files, "recurring-video-items"));
+  setupDropzone("loop-video-dropzone", "loop-bulk-upload", files => bulkUploadToLoop(files, "video-items", true));
+  setupDropzone("recurring-dropzone", "recurring-upload", files => bulkUploadToLoop(files, "recurring-video-items", true));
 
   bindCoverUpload("loop-cover-input", "loop-cover-preview", "loop-cover-url", () => saveLoopConfigSilent());
   bindCoverUpload("recurring-cover-input", "recurring-cover-preview", "recurring-cover-url", () => saveRecurringBatchSilent());

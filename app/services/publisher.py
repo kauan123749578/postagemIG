@@ -6,6 +6,12 @@ from app.models import Account, PostLog
 from app.services.cover import resolve_cover_url
 from app.services.health import check_account_health
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
+from app.services.meta_throttle import (
+    check_publish_allowed,
+    is_app_rate_limit_error,
+    mark_publish_complete,
+    report_app_rate_limit,
+)
 from app.services.rate_limit import can_post
 
 logger = logging.getLogger("publisher")
@@ -72,6 +78,10 @@ def publish_reel(
     caption = (caption or account.default_caption or "")[:INSTAGRAM_CAPTION_MAX]
     resolved_cover = resolve_cover_url(cover_url, batch_cover_url, video_index=video_index)
 
+    allowed_global, global_reason, _ = check_publish_allowed()
+    if not allowed_global:
+        raise InstagramAPIError(global_reason)
+
     for target, is_fallback in ((primary, False), (fallback, True)):
         if not target:
             continue
@@ -91,8 +101,11 @@ def publish_reel(
                 caption=caption, used_fallback=is_fallback,
             )
             db.commit()
+            mark_publish_complete()
             return {"media_id": media_id, "account_id": target.id, "used_fallback": is_fallback}
         except InstagramAPIError as exc:
+            if is_app_rate_limit_error(exc):
+                report_app_rate_limit()
             _log_post(
                 db, target.id,
                 media_type="reel", status="error",

@@ -7,6 +7,10 @@ import requests
 INSTAGRAM_CAPTION_MAX = 2200
 
 META_ERROR_HINTS: dict[int, str] = {
+    4: (
+        "Limite de requisições do APP na Meta — muitas contas postando ao mesmo tempo. "
+        "O painel pausa automaticamente; aumente o intervalo entre vídeos (120s+) e reduza loops simultâneos."
+    ),
     2207076: (
         "Instagram não conseguiu processar o vídeo. Use MP4 (H.264 + AAC), "
         "máx. ~100MB, URL pública acessível. Arquivos .mov podem falhar — converta para MP4."

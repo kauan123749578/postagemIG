@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -8,8 +7,10 @@ from sqlalchemy.orm import joinedload
 from app.database import SessionLocal
 from app.models import LoopConfig
 from app.services.instagram import InstagramAPIError
+from app.services.meta_throttle import check_publish_allowed
 from app.services.publisher import publish_reel
 from app.services.rate_limit import can_post
+from app.services.video_list import parse_videos_json
 
 logger = logging.getLogger("loop_worker")
 _worker_task: asyncio.Task | None = None
@@ -20,13 +21,7 @@ def _utcnow() -> datetime:
 
 
 def _parse_videos(videos_json: str) -> list[dict]:
-    try:
-        data = json.loads(videos_json or "[]")
-        if isinstance(data, list):
-            return [v for v in data if isinstance(v, dict) and v.get("video_url")]
-    except json.JSONDecodeError:
-        pass
-    return []
+    return parse_videos_json(videos_json)
 
 
 def _caption_for_loop(loop: LoopConfig, account) -> str:
@@ -62,6 +57,11 @@ def _process_single_loop(loop_id: int) -> None:
         )
         if not allowed:
             loop.last_error = f"Aguardando limite: {reason}"
+            return
+
+        allowed_global, global_reason, _ = check_publish_allowed()
+        if not allowed_global:
+            loop.last_error = global_reason
             return
 
         if loop.last_post_at and loop.interval_seconds > 0:
@@ -129,6 +129,8 @@ async def _worker_loop() -> None:
 
         for loop_id in loop_ids:
             await asyncio.to_thread(_process_single_loop, loop_id)
+            if len(loop_ids) > 1:
+                await asyncio.sleep(2)
 
         await asyncio.sleep(5)
 

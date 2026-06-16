@@ -40,6 +40,8 @@ from app.services.schedule_worker import start_schedule_worker
 from app.services.media_storage import list_media, save_image, save_video
 from app.services.rate_limit import can_post, usage_stats
 from app.services.storage import get_storage_status
+from app.services.meta_throttle import get_status as meta_throttle_status
+from app.services.video_list import normalize_video_payload, video_urls
 from app.services import settings as app_settings
 from app.services.tenancy import (
     assign_account_owner,
@@ -436,6 +438,7 @@ def health_check(db: Session = Depends(get_db)):
         "base_url": APP_BASE_URL,
         "storage": storage,
         "recovery": LAST_RECOVERY,
+        "meta_throttle": meta_throttle_status(),
     }
 
 
@@ -811,14 +814,32 @@ def get_loop(account_id: int, db: Session = Depends(get_db)):
 @app.put("/api/loop/{account_id}")
 def save_loop(account_id: int, body: LoopConfigRequest, db: Session = Depends(get_db)):
     _get_account_or_404(db, account_id)
-    if not body.videos:
-        raise HTTPException(400, "Adicione pelo menos 1 vídeo")
 
-    videos_json = json.dumps([v.model_dump() for v in body.videos])
+    normalized = normalize_video_payload(body.videos)
+    if not normalized:
+        loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+        if loop and loop.is_running:
+            raise HTTPException(400, "Pare o loop antes de remover todos os vídeos")
+        if not loop:
+            loop = LoopConfig(account_id=account_id)
+            db.add(loop)
+        loop.videos_json = "[]"
+        loop.current_index = 0
+        loop.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
+        loop.batch_size = body.batch_size
+        loop.interval_seconds = body.interval_seconds
+        loop.batch_cover_url = body.batch_cover_url or ""
+        db.commit()
+        return get_loop(account_id, db)
+
+    videos_json = json.dumps(normalized)
     loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
     if not loop:
         loop = LoopConfig(account_id=account_id)
         db.add(loop)
+
+    if video_urls(loop.videos_json) != [v["video_url"] for v in normalized]:
+        loop.current_index = 0
 
     loop.videos_json = videos_json
     loop.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
@@ -1006,23 +1027,40 @@ def get_recurring_batch(account_id: int, db: Session = Depends(get_db)):
 @app.put("/api/recurring-batch/{account_id}")
 def save_recurring_batch(account_id: int, body: RecurringBatchRequest, db: Session = Depends(get_db)):
     _get_account_or_404(db, account_id)
-    if not body.videos:
-        raise HTTPException(400, "Adicione pelo menos 1 vídeo ao lote")
 
     config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
     if not config:
         config = RecurringBatchConfig(account_id=account_id)
         db.add(config)
 
-    new_videos = [v.model_dump() for v in body.videos]
+    normalized = normalize_video_payload(body.videos)
+    if not normalized:
+        if config.is_running:
+            raise HTTPException(400, "Pare o lote recorrente antes de remover todos os vídeos")
+        config.name = body.name
+        config.videos_json = "[]"
+        config.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
+        config.cover_url = body.cover_url or ""
+        config.duration_hours = body.duration_hours
+        config.cycle_interval_hours = body.cycle_interval_hours
+        config.video_interval_seconds = body.video_interval_seconds
+        config.cycle_video_index = 0
+        config.consecutive_failures = 0
+        db.commit()
+        return _recurring_dict(config, db)
+
+    if video_urls(config.videos_json) != [v["video_url"] for v in normalized]:
+        config.cycle_video_index = 0
+        config.consecutive_failures = 0
+
     config.name = body.name
-    config.videos_json = json.dumps(new_videos)
+    config.videos_json = json.dumps(normalized)
     config.caption = body.caption[:INSTAGRAM_CAPTION_MAX]
     config.cover_url = body.cover_url or ""
     config.duration_hours = body.duration_hours
     config.cycle_interval_hours = body.cycle_interval_hours
     config.video_interval_seconds = body.video_interval_seconds
-    if config.is_running and len(new_videos) <= config.cycle_video_index:
+    if config.is_running and config.cycle_video_index >= len(normalized):
         config.cycle_video_index = 0
     db.commit()
     return _recurring_dict(config, db)
@@ -1236,6 +1274,7 @@ def dashboard_data(db: Session = Depends(get_db)):
         "pending_schedule": pending_schedule,
         "app_base_url": APP_BASE_URL,
         "storage": get_storage_status(db),
+        "meta_throttle": meta_throttle_status(),
         "accounts": [_account_dict(a, db) for a in accounts],
         "chart": {"labels": chart_days, "success": chart_success, "errors": chart_errors},
         "schedule_stats": schedule_stats,

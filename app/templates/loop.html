@@ -43,8 +43,12 @@
     </div>
     <div class="dropzone dropzone-lg" id="loop-video-dropzone">
       <div class="dropzone-icon">🎬</div>
-      <p><strong>Arraste vídeos</strong> ou clique para selecionar</p>
+      <p><strong>Arraste vídeos</strong> para substituir a lista ou clique para selecionar</p>
       <input type="file" id="loop-bulk-upload" accept="video/*" multiple>
+    </div>
+    <div class="row actions" style="margin-bottom:12px">
+      <button type="button" class="btn secondary" onclick="clearVideoList('video-items')">Limpar vídeos</button>
+      <button type="button" class="btn secondary" onclick="bulkUploadFromInput('loop-bulk-upload', 'video-items', false)">Adicionar mais vídeos</button>
     </div>
     <div id="video-items"></div>
 
@@ -109,8 +113,12 @@
     </div>
     <div class="dropzone dropzone-lg" id="recurring-dropzone">
       <div class="dropzone-icon">📦</div>
-      <p><strong>Arraste vídeos</strong> ou clique para selecionar</p>
+      <p><strong>Arraste vídeos</strong> para substituir a lista ou clique para selecionar</p>
       <input type="file" id="recurring-upload" accept="video/*" multiple>
+    </div>
+    <div class="row actions" style="margin-bottom:12px">
+      <button type="button" class="btn secondary" onclick="clearVideoList('recurring-video-items')">Limpar vídeos</button>
+      <button type="button" class="btn secondary" onclick="bulkUploadFromInput('recurring-upload', 'recurring-video-items', false)">Adicionar mais vídeos</button>
     </div>
     <div id="recurring-video-items"></div>
 
