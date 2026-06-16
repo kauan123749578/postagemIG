@@ -558,6 +558,9 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .stagger-item.disabled { opacity: 0.55; cursor: not-allowed; }
 .stagger-item input { margin-top: 4px; }
 
+.tabs-inline { display: flex; gap: 8px; flex-wrap: wrap; }
+.tabs-inline .tab { flex: 1; min-width: 140px; text-align: center; }
+
 .video-row {
   border: 1px solid var(--border);
   border-radius: 14px;

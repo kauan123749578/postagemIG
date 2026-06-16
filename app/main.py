@@ -36,7 +36,7 @@ from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, cli
 from app.services.loop_worker import start_loop_worker
 from app.services.loop_stagger import (
     get_active_queue,
-    list_loop_candidates,
+    list_stagger_candidates,
     stagger_status_dict,
     start_stagger_queue,
     stop_stagger_queue,
@@ -217,6 +217,7 @@ class LoopConfigRequest(BaseModel):
 class LoopStaggerStartRequest(BaseModel):
     account_ids: list[int] = Field(min_length=1)
     stagger_minutes: int = Field(default=15, ge=3, le=180)
+    mode: str = Field(default="loop", pattern="^(loop|recurring)$")
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
@@ -888,8 +889,8 @@ def stop_loop(account_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/loop-stagger/candidates")
-def loop_stagger_candidates(db: Session = Depends(get_db)):
-    return list_loop_candidates(db)
+def loop_stagger_candidates(mode: str = "loop", db: Session = Depends(get_db)):
+    return list_stagger_candidates(db, mode)
 
 
 @app.get("/api/loop-stagger/status")
@@ -906,7 +907,7 @@ def loop_stagger_status(db: Session = Depends(get_db)):
 
 @app.post("/api/loop-stagger/start")
 def loop_stagger_start(body: LoopStaggerStartRequest, db: Session = Depends(get_db)):
-    queue = start_stagger_queue(db, body.account_ids, body.stagger_minutes)
+    queue = start_stagger_queue(db, body.account_ids, body.stagger_minutes, body.mode)
     return stagger_status_dict(db, queue)
 
 

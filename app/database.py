@@ -123,3 +123,9 @@ def migrate_schema() -> None:
     if batch_cols and "cover_url" not in batch_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE scheduled_batches ADD COLUMN cover_url TEXT DEFAULT ''"))
+
+    stagger_cols = _table_columns("loop_stagger_queues")
+    if stagger_cols and "mode" not in stagger_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE loop_stagger_queues ADD COLUMN mode VARCHAR(16) DEFAULT 'loop'"))
+            conn.execute(text("UPDATE loop_stagger_queues SET mode = 'loop' WHERE mode IS NULL"))

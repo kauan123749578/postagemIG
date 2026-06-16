@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models import Account, LoopConfig, LoopStaggerQueue, RecurringBatchConfig
+from app.services.recurring_batch_worker import kick_recurring_batch
 from app.services.tenancy import get_current_user, scope_accounts
 from app.services.video_list import parse_videos_json
 
@@ -14,6 +15,15 @@ logger = logging.getLogger("loop_stagger")
 RECOMMENDED_STAGGER_MINUTES_DEV = 15
 RECOMMENDED_STAGGER_MINUTES_PROD = 8
 RECOMMENDED_VIDEO_INTERVAL_SECONDS = 120
+
+MODE_LABELS = {
+    "loop": "loop contínuo",
+    "recurring": "lote recorrente",
+}
+MODE_LABELS_PLURAL = {
+    "loop": "loops",
+    "recurring": "lotes recorrentes",
+}
 
 
 def _utcnow() -> datetime:
@@ -36,6 +46,13 @@ def _parse_account_ids(raw: str) -> list[int]:
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
     return []
+
+
+def _normalize_mode(mode: str) -> str:
+    mode = (mode or "loop").strip().lower()
+    if mode not in MODE_LABELS:
+        raise HTTPException(400, "Modo inválido — use loop ou recurring")
+    return mode
 
 
 def _loop_ready(loop: LoopConfig | None) -> tuple[bool, str]:
@@ -75,22 +92,72 @@ def activate_continuous_loop(db: Session, account_id: int) -> None:
     loop.last_error = ""
 
 
-def list_loop_candidates(db: Session) -> list[dict]:
+def activate_recurring_batch(db: Session, account_id: int) -> None:
+    config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+    ready, reason = _recurring_ready(config)
+    if not ready:
+        raise HTTPException(400, f"Conta #{account_id}: {reason}")
+
+    loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+    if loop and loop.is_running:
+        loop.is_running = False
+        loop.last_error = "Parado — lote recorrente iniciado via fila escalonada"
+
+    now = _utcnow()
+    duration = config.duration_hours
+    config.is_running = True
+    config.started_at = now
+    config.ends_at = now + timedelta(hours=duration)
+    config.cycle_video_index = 0
+    config.cycles_completed = 0
+    config.total_posts = 0
+    config.last_cycle_at = None
+    config.last_post_at = None
+    config.last_attempt_at = None
+    config.consecutive_failures = 0
+    config.last_error = ""
+    db.flush()
+    kick_recurring_batch(config.id)
+
+
+def _activate_account(db: Session, account_id: int, mode: str) -> None:
+    if mode == "recurring":
+        activate_recurring_batch(db, account_id)
+    else:
+        activate_continuous_loop(db, account_id)
+
+
+def list_stagger_candidates(db: Session, mode: str = "loop") -> list[dict]:
+    mode = _normalize_mode(mode)
     accounts = scope_accounts(db).order_by(Account.id).all()
     result = []
     for account in accounts:
-        loop = db.query(LoopConfig).filter(LoopConfig.account_id == account.id).first()
-        ready, reason = _loop_ready(loop)
+        if mode == "recurring":
+            config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account.id).first()
+            ready, reason = _recurring_ready(config)
+            is_running = bool(config and config.is_running)
+            video_count = len(parse_videos_json(config.videos_json)) if config else 0
+        else:
+            loop = db.query(LoopConfig).filter(LoopConfig.account_id == account.id).first()
+            ready, reason = _loop_ready(loop)
+            is_running = bool(loop and loop.is_running)
+            video_count = len(parse_videos_json(loop.videos_json)) if loop else 0
+
         result.append({
             "account_id": account.id,
             "name": account.name,
             "username": account.username,
             "ready": ready,
             "reason": reason if not ready else "",
-            "is_running": bool(loop and loop.is_running),
-            "video_count": len(parse_videos_json(loop.videos_json)) if loop else 0,
+            "is_running": is_running,
+            "video_count": video_count,
+            "mode": mode,
         })
     return result
+
+
+def list_loop_candidates(db: Session) -> list[dict]:
+    return list_stagger_candidates(db, "loop")
 
 
 def get_active_queue(db: Session) -> LoopStaggerQueue | None:
@@ -110,7 +177,13 @@ def stop_stagger_queue(db: Session) -> None:
         db.commit()
 
 
-def start_stagger_queue(db: Session, account_ids: list[int], stagger_minutes: int) -> LoopStaggerQueue:
+def start_stagger_queue(
+    db: Session,
+    account_ids: list[int],
+    stagger_minutes: int,
+    mode: str = "loop",
+) -> LoopStaggerQueue:
+    mode = _normalize_mode(mode)
     if len(account_ids) < 1:
         raise HTTPException(400, "Selecione pelo menos 1 conta")
     if stagger_minutes < 3:
@@ -132,8 +205,12 @@ def start_stagger_queue(db: Session, account_ids: list[int], stagger_minutes: in
         ordered.append(account_id)
 
     for account_id in ordered:
-        loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
-        ready, reason = _loop_ready(loop)
+        if mode == "recurring":
+            config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+            ready, reason = _recurring_ready(config)
+        else:
+            loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+            ready, reason = _loop_ready(loop)
         if not ready:
             account = db.get(Account, account_id)
             label = account.name if account else f"#{account_id}"
@@ -141,6 +218,7 @@ def start_stagger_queue(db: Session, account_ids: list[int], stagger_minutes: in
 
     user = get_current_user()
     owner_id = user.id if user else None
+    label_plural = MODE_LABELS_PLURAL[mode]
 
     existing = db.query(LoopStaggerQueue).filter(LoopStaggerQueue.is_active.is_(True))
     if user and user.role != "owner":
@@ -152,20 +230,30 @@ def start_stagger_queue(db: Session, account_ids: list[int], stagger_minutes: in
     now = _utcnow()
     queue = LoopStaggerQueue(
         owner_user_id=owner_id,
+        mode=mode,
         account_ids_json=json.dumps(ordered),
         stagger_minutes=stagger_minutes,
         next_index=1,
         is_active=len(ordered) > 1,
         next_activation_at=(now + timedelta(minutes=stagger_minutes)) if len(ordered) > 1 else None,
         started_at=now,
-        last_message=f"1/{len(ordered)} ativo — próximo em {stagger_minutes} min" if len(ordered) > 1 else f"{len(ordered)} loop(s) ativo(s)",
+        last_message=(
+            f"1/{len(ordered)} {label_plural} ativo — próximo em {stagger_minutes} min"
+            if len(ordered) > 1
+            else f"{len(ordered)} {label_plural} ativo(s)"
+        ),
     )
     db.add(queue)
 
-    activate_continuous_loop(db, ordered[0])
+    _activate_account(db, ordered[0], mode)
     db.commit()
     db.refresh(queue)
-    logger.info("Fila escalonada iniciada: %s contas, intervalo %s min", len(ordered), stagger_minutes)
+    logger.info(
+        "Fila escalonada (%s) iniciada: %s contas, intervalo %s min",
+        mode,
+        len(ordered),
+        stagger_minutes,
+    )
     return queue
 
 
@@ -178,6 +266,9 @@ def process_stagger_queues(db: Session) -> None:
     )
     for queue in queues:
         ids = _parse_account_ids(queue.account_ids_json)
+        mode = (queue.mode or "loop").lower()
+        label_plural = MODE_LABELS_PLURAL.get(mode, "loops")
+
         if not ids:
             queue.is_active = False
             continue
@@ -186,7 +277,7 @@ def process_stagger_queues(db: Session) -> None:
         if queue.next_index >= len(ids):
             queue.is_active = False
             queue.next_activation_at = None
-            queue.last_message = f"Fila concluída — {len(ids)} loop(s) ativos"
+            queue.last_message = f"Fila concluída — {len(ids)} {label_plural} ativos"
             continue
 
         if next_at and now < next_at:
@@ -197,7 +288,7 @@ def process_stagger_queues(db: Session) -> None:
         label = account.name if account else f"#{account_id}"
 
         try:
-            activate_continuous_loop(db, account_id)
+            _activate_account(db, account_id, mode)
             queue.next_index += 1
             activated = queue.next_index
             total = len(ids)
@@ -205,16 +296,23 @@ def process_stagger_queues(db: Session) -> None:
             if queue.next_index >= total:
                 queue.is_active = False
                 queue.next_activation_at = None
-                queue.last_message = f"Fila concluída — {total} loop(s) ativos"
+                queue.last_message = f"Fila concluída — {total} {label_plural} ativos"
             else:
                 queue.next_activation_at = now + timedelta(minutes=queue.stagger_minutes)
                 queue.last_message = (
                     f"{activated}/{total} ativos — próximo ({label}) em {queue.stagger_minutes} min"
                 )
 
-            logger.info("Fila escalonada: ativado loop da conta %s (%s/%s)", account_id, activated, total)
+            logger.info(
+                "Fila escalonada (%s): ativado conta %s (%s/%s)",
+                mode,
+                account_id,
+                activated,
+                total,
+            )
         except HTTPException as exc:
-            queue.last_message = f"Falha ao ativar {label}: {exc.detail}"
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            queue.last_message = f"Falha ao ativar {label}: {detail}"
             queue.next_index += 1
             if queue.next_index >= len(ids):
                 queue.is_active = False
@@ -224,16 +322,16 @@ def process_stagger_queues(db: Session) -> None:
 
 
 def stagger_status_dict(db: Session, queue: LoopStaggerQueue | None) -> dict:
+    base_recommendations = {
+        "stagger_minutes_dev": RECOMMENDED_STAGGER_MINUTES_DEV,
+        "stagger_minutes_prod": RECOMMENDED_STAGGER_MINUTES_PROD,
+        "video_interval_seconds": RECOMMENDED_VIDEO_INTERVAL_SECONDS,
+    }
     if not queue:
-        return {
-            "active": False,
-            "recommendations": {
-                "stagger_minutes_dev": RECOMMENDED_STAGGER_MINUTES_DEV,
-                "stagger_minutes_prod": RECOMMENDED_STAGGER_MINUTES_PROD,
-                "video_interval_seconds": RECOMMENDED_VIDEO_INTERVAL_SECONDS,
-            },
-        }
+        return {"active": False, "recommendations": base_recommendations}
 
+    mode = (queue.mode or "loop").lower()
+    label_plural = MODE_LABELS_PLURAL.get(mode, "loops")
     ids = _parse_account_ids(queue.account_ids_json)
     now = _utcnow()
     next_at = _normalize_dt(queue.next_activation_at)
@@ -242,7 +340,13 @@ def stagger_status_dict(db: Session, queue: LoopStaggerQueue | None) -> dict:
     items = []
     for idx, account_id in enumerate(ids):
         account = db.get(Account, account_id)
-        loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+        if mode == "recurring":
+            config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
+            is_running = bool(config and config.is_running)
+        else:
+            loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+            is_running = bool(loop and loop.is_running)
+
         if idx < queue.next_index:
             state = "ativo"
         elif idx == queue.next_index and queue.is_active:
@@ -254,11 +358,13 @@ def stagger_status_dict(db: Session, queue: LoopStaggerQueue | None) -> dict:
             "name": account.name if account else f"#{account_id}",
             "username": account.username if account else "",
             "state": state,
-            "is_running": bool(loop and loop.is_running),
+            "is_running": is_running,
         })
 
     return {
         "active": queue.is_active,
+        "mode": mode,
+        "mode_label": MODE_LABELS.get(mode, mode),
         "id": queue.id,
         "stagger_minutes": queue.stagger_minutes,
         "started_at": queue.started_at.isoformat() if queue.started_at else None,
@@ -268,9 +374,6 @@ def stagger_status_dict(db: Session, queue: LoopStaggerQueue | None) -> dict:
         "total_count": len(ids),
         "last_message": queue.last_message,
         "items": items,
-        "recommendations": {
-            "stagger_minutes_dev": RECOMMENDED_STAGGER_MINUTES_DEV,
-            "stagger_minutes_prod": RECOMMENDED_STAGGER_MINUTES_PROD,
-            "video_interval_seconds": RECOMMENDED_VIDEO_INTERVAL_SECONDS,
-        },
+        "label_plural": label_plural,
+        "recommendations": base_recommendations,
     }

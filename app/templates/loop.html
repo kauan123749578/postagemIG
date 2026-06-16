@@ -17,9 +17,14 @@
 <section id="panel-stagger" class="card glass glow hidden">
   <div class="page-header" style="margin-bottom:16px">
     <div>
-      <h2 style="margin:0">Ativar loops um por vez</h2>
+      <h2 style="margin:0">Ativar um por vez</h2>
       <p class="subtitle" style="margin-top:6px">Evita estourar o limite da Meta quando você tem várias contas</p>
     </div>
+  </div>
+
+  <div class="tabs tabs-inline" style="margin-bottom:20px">
+    <button type="button" class="tab active" data-stagger-mode="loop" onclick="setStaggerTarget('loop')">Loop contínuo</button>
+    <button type="button" class="tab" data-stagger-mode="recurring" onclick="setStaggerTarget('recurring')">Lote recorrente</button>
   </div>
 
   <div class="notice notice-warning" id="stagger-meta-notice">
@@ -46,11 +51,11 @@
   </div>
 
   <h3 class="section-title">Contas prontas para fila</h3>
-  <p class="hint">Marque as contas com vídeos + capa configurados. A primeira inicia agora; as demais entram na fila.</p>
+  <p class="hint" id="stagger-hint">Marque as contas com vídeos + capa configurados. A primeira inicia agora; as demais entram na fila.</p>
   <div id="stagger-candidates" class="stagger-list"></div>
 
   <div class="actions" style="margin-top:20px">
-    <button type="button" class="btn success" onclick="startStaggerQueue()">Iniciar fila escalonada</button>
+    <button type="button" class="btn success" id="stagger-start-btn" onclick="startStaggerQueue()">Iniciar fila escalonada</button>
     <button type="button" class="btn danger" onclick="stopStaggerQueue()">Cancelar fila</button>
   </div>
 </section>

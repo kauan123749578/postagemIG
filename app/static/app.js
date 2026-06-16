@@ -918,18 +918,50 @@ function setLoopMode(mode) {
   document.getElementById("panel-loop")?.classList.toggle("hidden", mode !== "loop");
   document.getElementById("panel-recurring")?.classList.toggle("hidden", mode !== "recurring");
   document.getElementById("panel-stagger")?.classList.toggle("hidden", mode !== "stagger");
-  if (mode === "stagger") loadStaggerCandidates();
+  if (mode === "stagger") {
+    setStaggerTarget(staggerTargetMode);
+    loadStaggerCandidates();
+  }
 }
 
 // --- Fila escalonada ---
 
 let staggerCandidatesCache = [];
+let staggerTargetMode = "loop";
+
+const STAGGER_HINTS = {
+  loop: "Configure vídeos + capa na aba <strong>Loop contínuo</strong>. A primeira conta inicia agora; as demais entram na fila.",
+  recurring: "Configure vídeos + capa na aba <strong>Lote recorrente</strong>. A primeira conta inicia agora; as demais entram na fila.",
+};
+const STAGGER_EMPTY = {
+  loop: "Nenhuma conta pronta — configure vídeos e capa em Loop contínuo primeiro.",
+  recurring: "Nenhuma conta pronta — configure vídeos e capa em Lote recorrente primeiro.",
+};
+
+function getStaggerMode() {
+  return staggerTargetMode;
+}
+
+function setStaggerTarget(mode) {
+  staggerTargetMode = mode;
+  syncStaggerModeTabs(mode);
+  const hint = document.getElementById("stagger-hint");
+  if (hint) hint.innerHTML = STAGGER_HINTS[mode] || STAGGER_HINTS.loop;
+  loadStaggerCandidates();
+}
+
+function syncStaggerModeTabs(mode) {
+  document.querySelectorAll("[data-stagger-mode]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.staggerMode === mode);
+  });
+}
 
 async function loadStaggerCandidates() {
   const el = document.getElementById("stagger-candidates");
   if (!el) return;
+  const mode = getStaggerMode();
   try {
-    staggerCandidatesCache = await api("/api/loop-stagger/candidates");
+    staggerCandidatesCache = await api(`/api/loop-stagger/candidates?mode=${mode}`);
     el.innerHTML = staggerCandidatesCache.map(c => `
       <label class="stagger-item ${c.ready ? "" : "disabled"}">
         <input type="checkbox" class="stagger-check" value="${c.account_id}" ${c.ready ? "" : "disabled"}>
@@ -938,7 +970,7 @@ async function loadStaggerCandidates() {
           <div class="meta">${c.ready ? `${c.video_count} vídeo(s)${c.is_running ? " · rodando" : ""}` : c.reason}</div>
         </div>
       </label>
-    `).join("") || "<p class='hint'>Nenhuma conta — configure vídeos e capa em Loop contínuo primeiro.</p>";
+    `).join("") || `<p class='hint'>${STAGGER_EMPTY[mode]}</p>`;
     refreshStaggerStatus();
   } catch (err) {
     el.innerHTML = `<p class='hint'>Erro ao carregar: ${err.message}</p>`;
@@ -954,6 +986,7 @@ function renderStaggerStatus(data) {
   }
   box.classList.remove("hidden");
   const mins = data.wait_seconds ? Math.ceil(data.wait_seconds / 60) : 0;
+  const labelPlural = data.label_plural || (data.mode === "recurring" ? "lotes recorrentes" : "loops");
   const list = (data.items || []).map(item => {
     const badge = item.state === "ativo" ? "✓ Ativo"
       : item.state === "proximo" ? "⏳ Próximo"
@@ -961,11 +994,15 @@ function renderStaggerStatus(data) {
     return `<div><strong>${badge}</strong> ${item.name}${item.username ? ` @${item.username}` : ""}</div>`;
   }).join("");
   box.innerHTML = `
-    <strong>Fila em andamento</strong> — ${data.activated_count}/${data.total_count} loops ativos
+    <strong>Fila em andamento</strong> (${data.mode_label || "loop"}) — ${data.activated_count}/${data.total_count} ${labelPlural} ativos
     ${mins ? ` · próximo em ~${mins} min` : ""}
     <div style="margin-top:10px">${list}</div>
     <div class="meta" style="margin-top:8px">${data.last_message || ""}</div>
   `;
+  if (data.mode) {
+    staggerTargetMode = data.mode;
+    syncStaggerModeTabs(data.mode);
+  }
 }
 
 async function refreshStaggerStatus() {
@@ -982,22 +1019,24 @@ async function startStaggerQueue() {
     return;
   }
   const staggerMinutes = +document.getElementById("stagger-minutes")?.value || 15;
+  const mode = getStaggerMode();
   try {
     const res = await api("/api/loop-stagger/start", {
       method: "POST",
-      body: JSON.stringify({ account_ids: ids, stagger_minutes: staggerMinutes }),
+      body: JSON.stringify({ account_ids: ids, stagger_minutes: staggerMinutes, mode }),
     });
     toast(res.last_message || "Fila escalonada iniciada");
     renderStaggerStatus(res);
     loadStaggerCandidates();
     refreshLoopStatus();
+    refreshRecurringStatus();
   } catch (err) {
     toast(err.message, "error");
   }
 }
 
 async function stopStaggerQueue() {
-  if (!confirm("Cancelar a fila escalonada? Os loops já ativos continuam rodando.")) return;
+  if (!confirm("Cancelar a fila escalonada? Os que já foram ativados continuam rodando.")) return;
   try {
     await api("/api/loop-stagger/stop", { method: "POST" });
     toast("Fila cancelada");

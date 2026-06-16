@@ -125,6 +125,7 @@ class LoopStaggerQueue(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True, index=True)
+    mode: Mapped[str] = mapped_column(String(16), default="loop")
     account_ids_json: Mapped[str] = mapped_column(Text, default="[]")
     stagger_minutes: Mapped[int] = mapped_column(Integer, default=15)
     next_index: Mapped[int] = mapped_column(Integer, default=0)
