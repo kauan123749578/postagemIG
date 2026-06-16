@@ -8,10 +8,10 @@
   </div>
 </div>
 
-<div class="tabs" style="margin-bottom:24px">
-  <button type="button" class="tab active" data-mode="loop" onclick="setLoopMode('loop')">Loop contínuo</button>
-  <button type="button" class="tab" data-mode="recurring" onclick="setLoopMode('recurring')">Lote recorrente</button>
-  <button type="button" class="tab" data-mode="stagger" onclick="setLoopMode('stagger')">Fila escalonada</button>
+<div class="tabs loop-main-tabs" style="margin-bottom:24px">
+  <button type="button" class="tab active" data-mode="loop" onclick="showLoopPanel('loop')">Loop contínuo</button>
+  <button type="button" class="tab" data-mode="recurring" onclick="showLoopPanel('recurring')">Lote recorrente</button>
+  <button type="button" class="tab" data-mode="stagger" onclick="showLoopPanel('stagger')">Fila escalonada</button>
 </div>
 
 <section id="panel-stagger" class="card glass glow hidden">
@@ -179,9 +179,23 @@
     <div class="batch-monitor-empty">Configure e inicie o lote recorrente</div>
   </div>
 </section>
+
+<script>
+function showLoopPanel(mode) {
+  ["loop", "recurring", "stagger"].forEach(function (m) {
+    var panel = document.getElementById("panel-" + m);
+    if (panel) panel.classList.toggle("hidden", m !== mode);
+  });
+  document.querySelectorAll(".loop-main-tabs .tab[data-mode]").forEach(function (btn) {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  if (typeof _onLoopPanelSwitch === "function") _onLoopPanelSwitch(mode);
+}
+</script>
 {% endblock %}
 {% block scripts %}
 <script>
+  showLoopPanel("loop");
   initLoopPage();
   setInterval(() => { refreshLoopStatus(); refreshRecurringStatus(); refreshStaggerStatus(); }, 10000);
 </script>

@@ -914,13 +914,12 @@ async function stopLoop() {
 }
 
 function setLoopMode(mode) {
-  document.querySelectorAll(".tab[data-mode]").forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
-  document.getElementById("panel-loop")?.classList.toggle("hidden", mode !== "loop");
-  document.getElementById("panel-recurring")?.classList.toggle("hidden", mode !== "recurring");
-  document.getElementById("panel-stagger")?.classList.toggle("hidden", mode !== "stagger");
+  showLoopPanel(mode);
+}
+
+function _onLoopPanelSwitch(mode) {
   if (mode === "stagger") {
     setStaggerTarget(staggerTargetMode);
-    loadStaggerCandidates();
   }
 }
 
@@ -947,7 +946,7 @@ function setStaggerTarget(mode) {
   syncStaggerModeTabs(mode);
   const hint = document.getElementById("stagger-hint");
   if (hint) hint.innerHTML = STAGGER_HINTS[mode] || STAGGER_HINTS.loop;
-  loadStaggerCandidates();
+  if (typeof loadStaggerCandidates === "function") loadStaggerCandidates();
 }
 
 function syncStaggerModeTabs(mode) {
