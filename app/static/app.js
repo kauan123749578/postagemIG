@@ -917,6 +917,94 @@ function setLoopMode(mode) {
   document.querySelectorAll(".tab[data-mode]").forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
   document.getElementById("panel-loop")?.classList.toggle("hidden", mode !== "loop");
   document.getElementById("panel-recurring")?.classList.toggle("hidden", mode !== "recurring");
+  document.getElementById("panel-stagger")?.classList.toggle("hidden", mode !== "stagger");
+  if (mode === "stagger") loadStaggerCandidates();
+}
+
+// --- Fila escalonada ---
+
+let staggerCandidatesCache = [];
+
+async function loadStaggerCandidates() {
+  const el = document.getElementById("stagger-candidates");
+  if (!el) return;
+  try {
+    staggerCandidatesCache = await api("/api/loop-stagger/candidates");
+    el.innerHTML = staggerCandidatesCache.map(c => `
+      <label class="stagger-item ${c.ready ? "" : "disabled"}">
+        <input type="checkbox" class="stagger-check" value="${c.account_id}" ${c.ready ? "" : "disabled"}>
+        <div>
+          <strong>${c.name}</strong>${c.username ? ` @${c.username}` : ""}
+          <div class="meta">${c.ready ? `${c.video_count} vídeo(s)${c.is_running ? " · rodando" : ""}` : c.reason}</div>
+        </div>
+      </label>
+    `).join("") || "<p class='hint'>Nenhuma conta — configure vídeos e capa em Loop contínuo primeiro.</p>";
+    refreshStaggerStatus();
+  } catch (err) {
+    el.innerHTML = `<p class='hint'>Erro ao carregar: ${err.message}</p>`;
+  }
+}
+
+function renderStaggerStatus(data) {
+  const box = document.getElementById("stagger-active-box");
+  if (!box) return;
+  if (!data?.active) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  const mins = data.wait_seconds ? Math.ceil(data.wait_seconds / 60) : 0;
+  const list = (data.items || []).map(item => {
+    const badge = item.state === "ativo" ? "✓ Ativo"
+      : item.state === "proximo" ? "⏳ Próximo"
+      : "○ Na fila";
+    return `<div><strong>${badge}</strong> ${item.name}${item.username ? ` @${item.username}` : ""}</div>`;
+  }).join("");
+  box.innerHTML = `
+    <strong>Fila em andamento</strong> — ${data.activated_count}/${data.total_count} loops ativos
+    ${mins ? ` · próximo em ~${mins} min` : ""}
+    <div style="margin-top:10px">${list}</div>
+    <div class="meta" style="margin-top:8px">${data.last_message || ""}</div>
+  `;
+}
+
+async function refreshStaggerStatus() {
+  try {
+    const data = await api("/api/loop-stagger/status");
+    renderStaggerStatus(data);
+  } catch { /* ignore */ }
+}
+
+async function startStaggerQueue() {
+  const ids = [...document.querySelectorAll(".stagger-check:checked")].map(el => +el.value);
+  if (!ids.length) {
+    toast("Selecione pelo menos 1 conta pronta", "error");
+    return;
+  }
+  const staggerMinutes = +document.getElementById("stagger-minutes")?.value || 15;
+  try {
+    const res = await api("/api/loop-stagger/start", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: ids, stagger_minutes: staggerMinutes }),
+    });
+    toast(res.last_message || "Fila escalonada iniciada");
+    renderStaggerStatus(res);
+    loadStaggerCandidates();
+    refreshLoopStatus();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function stopStaggerQueue() {
+  if (!confirm("Cancelar a fila escalonada? Os loops já ativos continuam rodando.")) return;
+  try {
+    await api("/api/loop-stagger/stop", { method: "POST" });
+    toast("Fila cancelada");
+    refreshStaggerStatus();
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 function getRecurringVideos() {
@@ -1290,6 +1378,7 @@ async function initLoopPage() {
 
   loadLoopConfig(true);
   loadRecurringConfig(true);
+  loadStaggerCandidates();
 }
 
 // --- Schedule ---

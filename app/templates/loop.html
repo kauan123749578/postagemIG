@@ -11,14 +11,56 @@
 <div class="tabs" style="margin-bottom:24px">
   <button type="button" class="tab active" data-mode="loop" onclick="setLoopMode('loop')">Loop contínuo</button>
   <button type="button" class="tab" data-mode="recurring" onclick="setLoopMode('recurring')">Lote recorrente</button>
+  <button type="button" class="tab" data-mode="stagger" onclick="setLoopMode('stagger')">Fila escalonada</button>
 </div>
+
+<section id="panel-stagger" class="card glass glow hidden">
+  <div class="page-header" style="margin-bottom:16px">
+    <div>
+      <h2 style="margin:0">Ativar loops um por vez</h2>
+      <p class="subtitle" style="margin-top:6px">Evita estourar o limite da Meta quando você tem várias contas</p>
+    </div>
+  </div>
+
+  <div class="notice notice-warning" id="stagger-meta-notice">
+    <strong>App Meta em desenvolvimento:</strong> use <strong>15 min</strong> entre ativações e <strong>120 seg</strong> entre vídeos.
+    Se o painel Meta mostrar 100% do limite, aguarde o desbloqueio (~30 min) antes de iniciar.
+  </div>
+
+  <div id="stagger-active-box" class="notice notice-info hidden" style="margin-top:16px"></div>
+
+  <div class="row" style="margin-top:20px">
+    <label class="field-label">Intervalo entre cada ativação
+      <select id="stagger-minutes">
+        <option value="15" selected>15 min — recomendado (app dev Meta)</option>
+        <option value="20">20 min — conservador</option>
+        <option value="10">10 min — app já em produção</option>
+        <option value="8">8 min — produção estável</option>
+        <option value="5">5 min — mínimo seguro</option>
+        <option value="30">30 min — muito conservador</option>
+      </select>
+    </label>
+    <label class="field-label" style="align-self:end">
+      <button type="button" class="btn secondary" onclick="loadStaggerCandidates()">Atualizar lista</button>
+    </label>
+  </div>
+
+  <h3 class="section-title">Contas prontas para fila</h3>
+  <p class="hint">Marque as contas com vídeos + capa configurados. A primeira inicia agora; as demais entram na fila.</p>
+  <div id="stagger-candidates" class="stagger-list"></div>
+
+  <div class="actions" style="margin-top:20px">
+    <button type="button" class="btn success" onclick="startStaggerQueue()">Iniciar fila escalonada</button>
+    <button type="button" class="btn danger" onclick="stopStaggerQueue()">Cancelar fila</button>
+  </div>
+</section>
 
 <section id="panel-loop" class="card glass glow">
   <form id="loop-form" onsubmit="saveLoop(event)">
     <label class="field-label">Conta<select id="loop-account" required></select></label>
     <div class="row">
       <label class="field-label">Tamanho do lote<input type="number" id="batch_size" value="4" min="1" max="50"></label>
-      <label class="field-label">Intervalo (seg)<input type="number" id="interval_seconds" value="60" min="0" max="3600"></label>
+      <label class="field-label">Intervalo (seg)<input type="number" id="interval_seconds" value="120" min="0" max="3600"></label>
     </div>
 
     <div class="caption-editor">
@@ -84,7 +126,7 @@
         </select>
       </label>
       <label class="field-label">Intervalo entre lotes (horas)<input type="number" id="recurring-cycle-hours" value="1" min="1" max="24"></label>
-      <label class="field-label">Intervalo entre vídeos (seg)<input type="number" id="recurring-video-interval" value="60" min="0" max="3600"></label>
+      <label class="field-label">Intervalo entre vídeos (seg)<input type="number" id="recurring-video-interval" value="120" min="0" max="3600"></label>
     </div>
 
     <div class="notice notice-info">
@@ -136,6 +178,6 @@
 {% block scripts %}
 <script>
   initLoopPage();
-  setInterval(() => { refreshLoopStatus(); refreshRecurringStatus(); }, 10000);
+  setInterval(() => { refreshLoopStatus(); refreshRecurringStatus(); refreshStaggerStatus(); }, 10000);
 </script>
 {% endblock %}

@@ -16,7 +16,7 @@ from app.config import APP_BASE_URL, IMAGES_DIR, VIDEOS_DIR
 from app.database import Base, SessionLocal, engine, get_db, migrate_schema
 from app.services.db_recovery import LAST_RECOVERY, recover_sqlite_to_postgres, sqlite_backup_info
 from app.models import AdminUser
-from app.models import Account, LoopConfig, PostLog, RecurringBatchConfig, ScheduledBatch, ScheduledPost
+from app.models import Account, LoopConfig, LoopStaggerQueue, PostLog, RecurringBatchConfig, ScheduledBatch, ScheduledPost
 from app.services.auth import (
     SESSION_COOKIE,
     clear_session_cookie,
@@ -34,6 +34,14 @@ from app.services.cover import require_batch_cover
 from app.services.health import check_account_health, refresh_account_insights
 from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
 from app.services.loop_worker import start_loop_worker
+from app.services.loop_stagger import (
+    get_active_queue,
+    list_loop_candidates,
+    stagger_status_dict,
+    start_stagger_queue,
+    stop_stagger_queue,
+)
+from app.services.loop_stagger_worker import start_loop_stagger_worker
 from app.services.publisher import publish_reel
 from app.services.recurring_batch_worker import kick_recurring_batch, start_recurring_batch_worker
 from app.services.schedule_worker import start_schedule_worker
@@ -78,6 +86,7 @@ async def lifespan(_: FastAPI):
         db.close()
     app.state.db_recovery = recovery
     start_loop_worker()
+    start_loop_stagger_worker()
     start_schedule_worker()
     start_recurring_batch_worker()
     yield
@@ -201,9 +210,13 @@ class LoopConfigRequest(BaseModel):
     videos: list[LoopVideoItem]
     caption: str = ""
     batch_size: int = Field(default=4, ge=1, le=50)
-    interval_seconds: int = Field(default=60, ge=0, le=3600)
+    interval_seconds: int = Field(default=120, ge=0, le=3600)
     batch_cover_url: str = ""
 
+
+class LoopStaggerStartRequest(BaseModel):
+    account_ids: list[int] = Field(min_length=1)
+    stagger_minutes: int = Field(default=15, ge=3, le=180)
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
@@ -872,6 +885,35 @@ def stop_loop(account_id: int, db: Session = Depends(get_db)):
         loop.is_running = False
         db.commit()
     return {"is_running": False}
+
+
+@app.get("/api/loop-stagger/candidates")
+def loop_stagger_candidates(db: Session = Depends(get_db)):
+    return list_loop_candidates(db)
+
+
+@app.get("/api/loop-stagger/status")
+def loop_stagger_status(db: Session = Depends(get_db)):
+    queue = get_active_queue(db)
+    if not queue:
+        last = db.query(LoopStaggerQueue).order_by(LoopStaggerQueue.id.desc()).first()
+        base = stagger_status_dict(db, None)
+        if last and not last.is_active:
+            base["last_run"] = stagger_status_dict(db, last)
+        return base
+    return stagger_status_dict(db, queue)
+
+
+@app.post("/api/loop-stagger/start")
+def loop_stagger_start(body: LoopStaggerStartRequest, db: Session = Depends(get_db)):
+    queue = start_stagger_queue(db, body.account_ids, body.stagger_minutes)
+    return stagger_status_dict(db, queue)
+
+
+@app.post("/api/loop-stagger/stop")
+def loop_stagger_stop(db: Session = Depends(get_db)):
+    stop_stagger_queue(db)
+    return {"ok": True, "active": False}
 
 
 def _recurring_dict(config: RecurringBatchConfig, db: Session) -> dict:

@@ -120,6 +120,21 @@ class LoopConfig(Base):
     account: Mapped["Account"] = relationship(back_populates="loop_config")
 
 
+class LoopStaggerQueue(Base):
+    __tablename__ = "loop_stagger_queues"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True, index=True)
+    account_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    stagger_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    next_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_activation_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ScheduledBatch(Base):
     __tablename__ = "scheduled_batches"
 

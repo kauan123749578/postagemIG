@@ -544,6 +544,20 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .account-item .meta { font-size: 0.84rem; color: var(--muted); margin-top: 4px; }
 .account-item .actions { margin: 0; }
 
+.stagger-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.stagger-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.02);
+  cursor: pointer;
+}
+.stagger-item.disabled { opacity: 0.55; cursor: not-allowed; }
+.stagger-item input { margin-top: 4px; }
+
 .video-row {
   border: 1px solid var(--border);
   border-radius: 14px;
