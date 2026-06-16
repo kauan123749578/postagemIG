@@ -41,6 +41,13 @@ from app.services.media_storage import list_media, save_image, save_video
 from app.services.rate_limit import can_post, usage_stats
 from app.services.storage import get_storage_status
 from app.services import settings as app_settings
+from app.services.tenancy import (
+    assign_account_owner,
+    get_account_or_404,
+    scope_accounts,
+    scoped_account_ids,
+    set_current_user,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -111,7 +118,16 @@ async def security_and_auth(request: Request, call_next):
             return JSONResponse({"detail": "Não autenticado"}, status_code=401, headers=headers)
         return RedirectResponse("/login", status_code=302, headers=headers)
 
-    response = await call_next(request)
+    if path in ("/settings", "/users", "/api/recovery/sqlite") and user.role != "owner":
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Acesso negado"}, status_code=403, headers=headers)
+        return RedirectResponse("/", status_code=302, headers=headers)
+
+    set_current_user(user)
+    try:
+        response = await call_next(request)
+    finally:
+        set_current_user(None)
     for k, v in headers.items():
         response.headers[k] = v
     return response
@@ -281,11 +297,11 @@ def _account_dict(account: Account, db: Session) -> dict:
     }
 
 
-def _get_account_or_404(db: Session, account_id: int) -> Account:
-    account = db.get(Account, account_id)
-    if not account:
-        raise HTTPException(404, "Conta não encontrada")
-    return account
+def _scope_by_accounts(query, column, db: Session):
+    ids = scoped_account_ids(db)
+    if ids is not None:
+        return query.filter(column.in_(ids))
+    return query
 
 
 def _current_user(request: Request, db: Session = Depends(get_db)) -> AdminUser:
@@ -325,6 +341,9 @@ def _schedule_dict(item: ScheduledPost, db: Session) -> dict:
         "posted_at": item.posted_at.isoformat() if item.posted_at else None,
         "sort_order": item.sort_order,
     }
+
+
+_get_account_or_404 = get_account_or_404
 
 
 def _enforce_post_limits(db: Session, account: Account) -> None:
@@ -488,17 +507,19 @@ async def upload_image(file: UploadFile = File(...)):
 # --- API: Settings ---
 
 @app.get("/api/settings")
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(db: Session = Depends(get_db), user: AdminUser = Depends(_current_user)):
+    require_owner(user)
     return {
         **app_settings.get_all_settings(db),
         "caption_max_length": INSTAGRAM_CAPTION_MAX,
-        "current_accounts": db.query(Account).count(),
+        "current_accounts": scope_accounts(db).count(),
         "app_base_url": APP_BASE_URL,
     }
 
 
 @app.put("/api/settings")
-def update_settings(body: AppSettingsUpdate, db: Session = Depends(get_db)):
+def update_settings(body: AppSettingsUpdate, db: Session = Depends(get_db), user: AdminUser = Depends(_current_user)):
+    require_owner(user)
     app_settings.set_setting(db, "default_max_posts_per_day", str(body.default_max_posts_per_day))
     app_settings.set_setting(db, "default_max_posts_per_hour", str(body.default_max_posts_per_hour))
     app_settings.set_setting(db, "default_loop_batch_size", str(body.default_loop_batch_size))
@@ -511,15 +532,18 @@ def update_settings(body: AppSettingsUpdate, db: Session = Depends(get_db)):
 
 @app.get("/api/accounts")
 def list_accounts(db: Session = Depends(get_db)):
-    accounts = db.query(Account).order_by(Account.id).all()
+    accounts = scope_accounts(db).order_by(Account.id).all()
     return [_account_dict(a, db) for a in accounts]
 
 
 @app.post("/api/accounts", status_code=201)
-def create_account(body: AccountCreate, db: Session = Depends(get_db)):
+def create_account(body: AccountCreate, db: Session = Depends(get_db), user: AdminUser = Depends(_current_user)):
     ok, reason = app_settings.can_add_account(db)
     if not ok:
         raise HTTPException(400, reason)
+
+    if body.fallback_account_id:
+        _get_account_or_404(db, body.fallback_account_id)
 
     defaults = app_settings.get_all_settings(db)
     account = Account(
@@ -536,6 +560,7 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
         is_active=body.is_active,
         fallback_account_id=body.fallback_account_id,
     )
+    assign_account_owner(account, user)
     db.add(account)
     db.commit()
     db.refresh(account)
@@ -551,7 +576,7 @@ def get_account(account_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/contingency")
 def list_contingency(db: Session = Depends(get_db)):
-    accounts = db.query(Account).order_by(Account.id).all()
+    accounts = scope_accounts(db).order_by(Account.id).all()
     return [
         {
             "id": a.id,
@@ -568,7 +593,7 @@ def list_contingency(db: Session = Depends(get_db)):
 
 @app.put("/api/contingency")
 def update_contingency(body: ContingencyUpdate, db: Session = Depends(get_db)):
-    account_ids = {a.id for a in db.query(Account).all()}
+    account_ids = {a.id for a in scope_accounts(db).all()}
     for item in body.mappings:
         if item.account_id not in account_ids:
             raise HTTPException(404, f"Conta {item.account_id} não encontrada")
@@ -589,6 +614,8 @@ def update_contingency(body: ContingencyUpdate, db: Session = Depends(get_db)):
 def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(get_db)):
     account = _get_account_or_404(db, account_id)
     data = body.model_dump(exclude_unset=True)
+    if data.get("fallback_account_id"):
+        _get_account_or_404(db, data["fallback_account_id"])
     if "default_caption" in data and data["default_caption"] is not None:
         data["default_caption"] = data["default_caption"][:INSTAGRAM_CAPTION_MAX]
     for key, value in data.items():
@@ -818,6 +845,7 @@ def start_loop(account_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/loop/{account_id}/stop")
 def stop_loop(account_id: int, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
     loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
     if loop:
         loop.is_running = False
@@ -940,7 +968,7 @@ def _normalize_recurring_dt(dt: datetime | None) -> datetime | None:
 @app.get("/api/recurring-batches/active")
 def list_active_recurring_batches(db: Session = Depends(get_db)):
     configs = (
-        db.query(RecurringBatchConfig)
+        _scope_by_accounts(db.query(RecurringBatchConfig), RecurringBatchConfig.account_id, db)
         .filter(RecurringBatchConfig.is_running.is_(True))
         .order_by(RecurringBatchConfig.started_at.desc())
         .all()
@@ -950,7 +978,7 @@ def list_active_recurring_batches(db: Session = Depends(get_db)):
 
 @app.get("/api/recurring-batches")
 def list_recurring_batches(db: Session = Depends(get_db)):
-    configs = db.query(RecurringBatchConfig).order_by(RecurringBatchConfig.account_id).all()
+    configs = _scope_by_accounts(db.query(RecurringBatchConfig), RecurringBatchConfig.account_id, db).order_by(RecurringBatchConfig.account_id).all()
     return [_recurring_dict(c, db) for c in configs if json.loads(c.videos_json or "[]")]
 
 
@@ -1038,6 +1066,7 @@ def start_recurring_batch(account_id: int, body: RecurringBatchStart, db: Sessio
 
 @app.post("/api/recurring-batch/{account_id}/stop")
 def stop_recurring_batch(account_id: int, db: Session = Depends(get_db)):
+    _get_account_or_404(db, account_id)
     config = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.account_id == account_id).first()
     if config:
         config.is_running = False
@@ -1050,7 +1079,12 @@ def stop_recurring_batch(account_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/schedule")
 def list_schedule(db: Session = Depends(get_db)):
-    items = db.query(ScheduledPost).order_by(ScheduledPost.scheduled_at.desc()).limit(200).all()
+    items = (
+        _scope_by_accounts(db.query(ScheduledPost), ScheduledPost.account_id, db)
+        .order_by(ScheduledPost.scheduled_at.desc())
+        .limit(200)
+        .all()
+    )
     return [_schedule_dict(i, db) for i in items]
 
 
@@ -1112,6 +1146,7 @@ def cancel_schedule(item_id: int, db: Session = Depends(get_db)):
     item = db.get(ScheduledPost, item_id)
     if not item:
         raise HTTPException(404, "Agendamento não encontrado")
+    _get_account_or_404(db, item.account_id)
     if item.status not in ("pending", "error"):
         raise HTTPException(400, "Só é possível cancelar pendentes ou com erro")
     item.status = "cancelled"
@@ -1122,7 +1157,7 @@ def cancel_schedule(item_id: int, db: Session = Depends(get_db)):
 @app.get("/api/recent-posts")
 def recent_posts(db: Session = Depends(get_db)):
     logs = (
-        db.query(PostLog)
+        _scope_by_accounts(db.query(PostLog), PostLog.account_id, db)
         .order_by(PostLog.posted_at.desc())
         .limit(50)
         .all()
@@ -1148,12 +1183,23 @@ def recent_posts(db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard")
 def dashboard_data(db: Session = Depends(get_db)):
-    accounts = db.query(Account).all()
-    total_posts = db.query(PostLog).filter(PostLog.status == "success").count()
-    errors = db.query(PostLog).filter(PostLog.status == "error").count()
-    running_loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
-    running_recurring = db.query(RecurringBatchConfig).filter(RecurringBatchConfig.is_running.is_(True)).count()
-    pending_schedule = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
+    accounts = scope_accounts(db).all()
+    account_ids = scoped_account_ids(db)
+    posts_q = db.query(PostLog)
+    loops_q = db.query(LoopConfig)
+    recurring_q = db.query(RecurringBatchConfig)
+    schedule_q = db.query(ScheduledPost)
+    if account_ids is not None:
+        posts_q = posts_q.filter(PostLog.account_id.in_(account_ids))
+        loops_q = loops_q.filter(LoopConfig.account_id.in_(account_ids))
+        recurring_q = recurring_q.filter(RecurringBatchConfig.account_id.in_(account_ids))
+        schedule_q = schedule_q.filter(ScheduledPost.account_id.in_(account_ids))
+
+    total_posts = posts_q.filter(PostLog.status == "success").count()
+    errors = posts_q.filter(PostLog.status == "error").count()
+    running_loops = loops_q.filter(LoopConfig.is_running.is_(True)).count()
+    running_recurring = recurring_q.filter(RecurringBatchConfig.is_running.is_(True)).count()
+    pending_schedule = schedule_q.filter(ScheduledPost.status == "pending").count()
     settings = app_settings.get_all_settings(db)
 
     now = datetime.now(timezone.utc)
@@ -1166,21 +1212,19 @@ def dashboard_data(db: Session = Depends(get_db)):
         day_end = day_start + timedelta(days=1)
         chart_days.append(day_start.strftime("%d/%m"))
         chart_success.append(
-            db.query(PostLog)
-            .filter(PostLog.status == "success", PostLog.posted_at >= day_start, PostLog.posted_at < day_end)
+            posts_q.filter(PostLog.status == "success", PostLog.posted_at >= day_start, PostLog.posted_at < day_end)
             .count()
         )
         chart_errors.append(
-            db.query(PostLog)
-            .filter(PostLog.status == "error", PostLog.posted_at >= day_start, PostLog.posted_at < day_end)
+            posts_q.filter(PostLog.status == "error", PostLog.posted_at >= day_start, PostLog.posted_at < day_end)
             .count()
         )
 
     schedule_stats = {
-        "pending": db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count(),
-        "posted": db.query(ScheduledPost).filter(ScheduledPost.status == "posted").count(),
-        "error": db.query(ScheduledPost).filter(ScheduledPost.status == "error").count(),
-        "processing": db.query(ScheduledPost).filter(ScheduledPost.status == "processing").count(),
+        "pending": schedule_q.filter(ScheduledPost.status == "pending").count(),
+        "posted": schedule_q.filter(ScheduledPost.status == "posted").count(),
+        "error": schedule_q.filter(ScheduledPost.status == "error").count(),
+        "processing": schedule_q.filter(ScheduledPost.status == "processing").count(),
     }
 
     return {

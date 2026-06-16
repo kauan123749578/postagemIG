@@ -41,6 +41,7 @@ class Account(Base):
     total_impressions: Mapped[int] = mapped_column(Integer, default=0)
 
     fallback_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

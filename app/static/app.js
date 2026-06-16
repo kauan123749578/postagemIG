@@ -1469,6 +1469,16 @@ async function initSchedulePage() {
 // --- Settings ---
 
 async function initSettingsPage() {
+  try {
+    const me = await api("/api/me");
+    if (me.role !== "owner") {
+      window.location.href = "/";
+      return;
+    }
+  } catch {
+    window.location.href = "/login";
+    return;
+  }
   const data = await api("/api/settings");
   document.getElementById("default_max_posts_per_day").value = data.default_max_posts_per_day;
   document.getElementById("default_max_posts_per_hour").value = data.default_max_posts_per_hour;
@@ -1499,7 +1509,7 @@ async function loadUsersList() {
     <div class="account-item">
       <div>
         <strong>${u.username}</strong>
-        <div class="meta">${u.role === "owner" ? "Proprietário" : "Administrador"} | ${u.is_active ? "Ativo" : "Inativo"}</div>
+        <div class="meta">${u.role === "owner" ? "Proprietário" : "Cliente"} | ${u.is_active ? "Ativo" : "Inativo"}</div>
       </div>
       ${u.role !== "owner" ? `<button class="btn danger" onclick="deletePanelUser(${u.id})">Excluir</button>` : ""}
     </div>
@@ -1533,7 +1543,10 @@ async function deletePanelUser(id) {
 
 document.addEventListener("DOMContentLoaded", () => {
   api("/api/me").then(me => {
-    if (me.role !== "owner") document.getElementById("nav-users")?.classList.add("hidden");
+    if (me.role !== "owner") {
+      document.getElementById("nav-users")?.classList.add("hidden");
+      document.getElementById("nav-settings")?.classList.add("hidden");
+    }
   }).catch(() => {});
 });
 

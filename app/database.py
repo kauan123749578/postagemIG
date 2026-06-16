@@ -92,6 +92,16 @@ def migrate_schema() -> None:
     if account_cols and "fallback_account_id" not in account_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE accounts ADD COLUMN fallback_account_id INTEGER"))
+    if account_cols and "owner_user_id" not in account_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE accounts ADD COLUMN owner_user_id INTEGER"))
+            conn.execute(
+                text(
+                    "UPDATE accounts SET owner_user_id = "
+                    "(SELECT id FROM admin_users WHERE role = 'owner' ORDER BY id LIMIT 1) "
+                    "WHERE owner_user_id IS NULL"
+                )
+            )
 
     loop_cols = _table_columns("loop_configs")
     if loop_cols and "batch_cover_url" not in loop_cols:

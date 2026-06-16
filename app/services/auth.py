@@ -66,7 +66,7 @@ def ensure_admin(db: Session) -> None:
     db.commit()
 
 
-def create_user(db: Session, username: str, password: str, role: str = "admin") -> AdminUser:
+def create_user(db: Session, username: str, password: str, role: str = "client") -> AdminUser:
     username = username.strip().lower()
     if len(username) < 3:
         raise HTTPException(400, "Usuário deve ter pelo menos 3 caracteres")
@@ -74,7 +74,7 @@ def create_user(db: Session, username: str, password: str, role: str = "admin") 
         raise HTTPException(400, f"Senha deve ter pelo menos {MIN_PASSWORD_LENGTH} caracteres")
     if db.query(AdminUser).filter(AdminUser.username == username).first():
         raise HTTPException(400, "Usuário já existe")
-    user = AdminUser(username=username, password_hash=hash_password(password), role=role)
+    user = AdminUser(username=username, password_hash=hash_password(password), role="client")
     db.add(user)
     db.commit()
     db.refresh(user)
