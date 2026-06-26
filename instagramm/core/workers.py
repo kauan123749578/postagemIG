@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from core import service
-from core.db import Account, LoopConfig, ScheduledPost, SessionLocal
+from core.db import Account, LoopConfig, ScheduledPost, SessionLocal, WarmConfig
 
 POLL_SECONDS = 5
 RATE_LIMIT_BACKOFF = 600  # 10 min após limite do Instagram
@@ -46,6 +46,7 @@ class WorkerManager:
             try:
                 changed = self._process_loops()
                 changed = self._process_scheduled() or changed
+                changed = self._process_warming() or changed
                 if changed:
                     self._notify()
             except Exception:  # noqa: BLE001
@@ -135,4 +136,42 @@ class WorkerManager:
                 changed = True
         finally:
             db.close()
+        return changed
+
+    # ---- aquecimento ----
+    def _process_warming(self) -> bool:
+        import random
+
+        changed = False
+        db = SessionLocal()
+        due_ids = []
+        try:
+            warms = db.query(WarmConfig).filter(WarmConfig.is_running.is_(True)).all()
+            for w in warms:
+                acc = db.get(Account, w.account_id)
+                if not acc or not acc.is_active or acc.status != "healthy":
+                    continue
+                nxt = w.next_run_at
+                if nxt and nxt.tzinfo is None:
+                    nxt = nxt.replace(tzinfo=timezone.utc)
+                if nxt and nxt > _now():
+                    continue
+                due_ids.append((w.account_id, w.interval_minutes))
+        finally:
+            db.close()
+
+        for account_id, interval in due_ids:
+            service.run_warm_once(account_id)
+            # agenda o próximo com variação de ±30%
+            jitter = random.uniform(0.7, 1.3)
+            nxt = _now() + timedelta(minutes=max(5, interval) * jitter)
+            db = SessionLocal()
+            try:
+                w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+                if w and w.is_running:
+                    w.next_run_at = nxt
+                    db.commit()
+            finally:
+                db.close()
+            changed = True
         return changed

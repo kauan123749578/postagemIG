@@ -1,4 +1,6 @@
 """Tela de Contas: adicionar, conectar (com 2FA), listar e excluir."""
+from tkinter import filedialog
+
 import customtkinter as ctk
 
 from core import service
@@ -54,6 +56,10 @@ class AccountsView(BaseView):
         self.connect_btn = widgets.primary_button(inner, "🔗  Conectar conta", self._save_and_connect)
         self.connect_btn.pack(fill="x", pady=(10, 6))
         widgets.ghost_button(inner, "Limpar", self._reset_form).pack(fill="x")
+
+        ctk.CTkFrame(inner, height=1, fg_color=theme.BORDER).pack(fill="x", pady=14)
+        widgets.subtitle(inner, "Já tem uma sessão salva? Importe um arquivo session.json:").pack(anchor="w", pady=(0, 6))
+        widgets.ghost_button(inner, "📂  Importar session.json", self._import_session).pack(fill="x")
 
     def _add_field(self, master, label, placeholder, show=None):
         widgets.field_label(master, label).pack(anchor="w", pady=(8, 2))
@@ -244,6 +250,27 @@ class AccountsView(BaseView):
         if not confirm(self.app, f"Excluir a conta '{acc['name']}'?", "Excluir conta"):
             return
         self.app.run_async(lambda: service.delete_account(acc["id"]), on_done=lambda _r: (self.app.toast("Conta excluída", "success"), self._reload()))
+
+    def _import_session(self):
+        path = filedialog.askopenfilename(title="Selecionar session.json", filetypes=[("Sessão JSON", "*.json")])
+        if not path:
+            return
+        name = self.fields["name"].get().strip()
+        proxy = self.fields["proxy_url"].get().strip()
+        self.app.toast("Importando sessão...", "info")
+
+        def task():
+            return service.import_session(name, path, proxy)
+
+        def done(res):
+            if res.get("status") == "connected":
+                self.app.toast(res.get("message", "Sessão importada"), "success")
+                self._reset_form()
+            else:
+                self.app.toast(res.get("message", "Falha ao importar"), "error")
+            self._reload()
+
+        self.app.run_async(task, on_done=done)
 
     def _reset_form(self):
         self.edit_id = None

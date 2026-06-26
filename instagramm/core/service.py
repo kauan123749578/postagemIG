@@ -11,9 +11,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core import instagram as ig
+from core import notify
 from core.config import IMAGE_EXTENSIONS, IMAGES_DIR, INSTAGRAM_CAPTION_MAX, VIDEO_EXTENSIONS, VIDEOS_DIR
 from core.crypto import decrypt_secret, encrypt_secret
-from core.db import Account, LoopConfig, PostLog, ScheduledPost, SessionLocal, init_db
+from core.db import Account, LoopConfig, PostLog, ScheduledPost, SessionLocal, WarmConfig, init_db
 
 # device/uuids guardados entre a 1ª tentativa e o envio do código 2FA
 _pending_2fa: dict[int, dict] = {}
@@ -174,6 +175,7 @@ def connect_account(
         acc.username = result.get("username") or acc.username
         acc.status = "healthy"
         acc.status_message = "Conectada"
+        notify.log_event("Conta conectada", "success", acc.name)
         return {"status": "connected", "message": "Conta conectada com sucesso"}
 
 
@@ -290,6 +292,8 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
                 video_path=video_path,
                 status="success",
             ))
+            link = f"https://instagram.com/reel/{result.get('code')}" if result.get("code") else ""
+            notify.log_event(f"Reel publicado 🎬 {link}".strip(), "success", acc.name)
             return {"ok": True, "media_pk": result["media_pk"], "code": result.get("code", "")}
         except ig.InstagramError as exc:
             db.add(PostLog(
@@ -301,6 +305,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             ))
             acc.status = "error" if exc.kind != "rate_limit" else acc.status
             acc.status_message = str(exc)
+            notify.log_event(f"Falha ao publicar Reel: {exc}", "error", acc.name)
             return {"ok": False, "message": str(exc), "kind": exc.kind}
 
 
@@ -366,6 +371,9 @@ def set_loop_running(account_id: int, running: bool) -> None:
         if running:
             loop.next_run_at = datetime.now(timezone.utc)
             loop.last_error = ""
+        acc = db.get(Account, account_id)
+        name = acc.name if acc else ""
+    notify.log_event("Loop contínuo " + ("iniciado" if running else "parado"), "info", name)
 
 
 # ---------------- Agendamentos ----------------
@@ -413,6 +421,7 @@ def dashboard_stats() -> dict:
         total = db.query(Account).count()
         connected = db.query(Account).filter(Account.status == "healthy").count()
         loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
+        warming = db.query(WarmConfig).filter(WarmConfig.is_running.is_(True)).count()
         day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         posts_today = db.query(PostLog).filter(PostLog.status == "success", PostLog.posted_at >= day_ago).count()
         pending = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
@@ -420,6 +429,137 @@ def dashboard_stats() -> dict:
             "accounts": total,
             "connected": connected,
             "loops_running": loops,
+            "warming": warming,
             "posts_24h": posts_today,
             "scheduled_pending": pending,
         }
+
+
+# ---------------- Importar sessão ----------------
+
+def import_session(name: str, path: str, proxy_url: str = "") -> dict:
+    """Cria uma conta a partir de um arquivo session.json da instagrapi."""
+    try:
+        result = ig.load_session_file(path, proxy_url or None)
+    except ig.InstagramError as exc:
+        return {"status": "error", "message": str(exc)}
+
+    with session_scope() as db:
+        username = result.get("username") or ""
+        acc = db.query(Account).filter(Account.username == username).first() if username else None
+        if not acc:
+            acc = Account(name=name.strip() or username or "Conta", username=username)
+            db.add(acc)
+            db.flush()
+        acc.proxy_url = proxy_url.strip()
+        acc.session_json = json.dumps(result["settings"])
+        acc.username = username or acc.username
+        acc.status = "healthy"
+        acc.status_message = "Sessão importada"
+        notify.log_event("Sessão importada com sucesso", "success", acc.name)
+        return {"status": "connected", "message": f"Conta @{username} importada", "account_id": acc.id}
+
+
+# ---------------- Aquecimento ----------------
+
+def get_warm(account_id: int) -> dict:
+    with session_scope() as db:
+        w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+        if not w:
+            return {
+                "likes_per_run": 3, "stories_per_run": 3, "follows_per_run": 0, "saves_per_run": 0,
+                "interval_minutes": 45, "hashtags": "reels,explore,viral,foryou",
+                "is_running": False, "total_actions": 0, "last_summary": "", "last_error": "",
+            }
+        return {
+            "likes_per_run": w.likes_per_run, "stories_per_run": w.stories_per_run,
+            "follows_per_run": w.follows_per_run, "saves_per_run": w.saves_per_run,
+            "interval_minutes": w.interval_minutes, "hashtags": w.hashtags,
+            "is_running": w.is_running, "total_actions": w.total_actions,
+            "last_summary": w.last_summary, "last_error": w.last_error,
+        }
+
+
+def save_warm(account_id: int, **cfg) -> None:
+    with session_scope() as db:
+        w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+        if not w:
+            w = WarmConfig(account_id=account_id)
+            db.add(w)
+        for key in ("likes_per_run", "stories_per_run", "follows_per_run", "saves_per_run", "interval_minutes"):
+            if key in cfg and cfg[key] is not None:
+                setattr(w, key, max(0, int(cfg[key])))
+        if "hashtags" in cfg and cfg["hashtags"] is not None:
+            w.hashtags = cfg["hashtags"]
+        w.interval_minutes = max(5, w.interval_minutes or 45)
+
+
+def set_warm_running(account_id: int, running: bool) -> None:
+    with session_scope() as db:
+        w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+        if not w:
+            w = WarmConfig(account_id=account_id)
+            db.add(w)
+        w.is_running = running
+        if running:
+            w.next_run_at = datetime.now(timezone.utc)
+            w.last_error = ""
+        acc = db.get(Account, account_id)
+        name = acc.name if acc else ""
+    notify.log_event("Aquecimento " + ("iniciado" if running else "parado"), "warm", name)
+
+
+def run_warm_once(account_id: int) -> dict:
+    """Executa uma sessão de aquecimento agora. Retorna o resumo."""
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+        if not acc:
+            return {"ok": False, "message": "Conta não encontrada"}
+        if not w:
+            w = WarmConfig(account_id=account_id)
+            db.add(w)
+            db.flush()
+        likes, stories = w.likes_per_run, w.stories_per_run
+        follows, saves = w.follows_per_run, w.saves_per_run
+        tags = [t.strip() for t in (w.hashtags or "").split(",") if t.strip()]
+        name = acc.name
+
+    try:
+        summary, settings = ig.warm_session(
+            acc, likes=likes, stories=stories, follows=follows, saves=saves, hashtags=tags or None
+        )
+    except ig.InstagramError as exc:
+        with session_scope() as db:
+            w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+            if w:
+                w.last_error = str(exc)
+        notify.log_event(f"Falha no aquecimento: {exc}", "error", name)
+        return {"ok": False, "message": str(exc)}
+
+    actions = summary["liked"] + summary["stories"] + summary["followed"] + summary["saved"]
+    text = f"❤️ {summary['liked']} curtidas · 👁 {summary['stories']} stories · ➕ {summary['followed']} follows · 🔖 {summary['saved']} salvos"
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        if acc:
+            acc.session_json = json.dumps(settings)
+        w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
+        if w:
+            w.total_actions += actions
+            w.last_run_at = datetime.now(timezone.utc)
+            w.last_summary = text
+            w.last_error = ""
+    notify.log_event(f"Aquecimento concluído — {text}", "warm", name)
+    return {"ok": True, "summary": summary, "text": text}
+
+
+def list_warming() -> list[dict]:
+    with session_scope() as db:
+        rows = db.query(WarmConfig, Account.name).join(Account, WarmConfig.account_id == Account.id).all()
+        return [{
+            "account_id": w.account_id,
+            "account": name,
+            "is_running": w.is_running,
+            "total_actions": w.total_actions,
+            "last_summary": w.last_summary,
+        } for w, name in rows]

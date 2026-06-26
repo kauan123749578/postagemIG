@@ -94,5 +94,41 @@ class ScheduledPost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+
+
+class EventLog(Base):
+    __tablename__ = "event_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    level: Mapped[str] = mapped_column(String(16), default="info")  # info/success/error/warm
+    account: Mapped[str] = mapped_column(String(120), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+class WarmConfig(Base):
+    __tablename__ = "warm_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), unique=True, index=True)
+    is_running: Mapped[bool] = mapped_column(Boolean, default=False)
+    likes_per_run: Mapped[int] = mapped_column(Integer, default=3)
+    stories_per_run: Mapped[int] = mapped_column(Integer, default=3)
+    follows_per_run: Mapped[int] = mapped_column(Integer, default=0)
+    saves_per_run: Mapped[int] = mapped_column(Integer, default=0)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=45)
+    hashtags: Mapped[str] = mapped_column(Text, default="reels,explore,viral,foryou")
+    total_actions: Mapped[int] = mapped_column(Integer, default=0)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_summary: Mapped[str] = mapped_column(Text, default="")
+    last_error: Mapped[str] = mapped_column(Text, default="")
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)

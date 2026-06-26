@@ -14,14 +14,15 @@ class DashboardView(BaseView):
 
         self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.cards_frame.pack(fill="x")
-        for i in range(4):
+        for i in range(5):
             self.cards_frame.grid_columnconfigure(i, weight=1)
         self.stat_cards = {}
         specs = [
             ("connected", "Contas conectadas", theme.SUCCESS),
             ("loops_running", "Loops ativos", theme.PRIMARY),
+            ("warming", "Aquecendo", theme.WARNING),
             ("posts_24h", "Posts (24h)", theme.ACCENT),
-            ("scheduled_pending", "Agendados", theme.WARNING),
+            ("scheduled_pending", "Agendados", theme.MUTED),
         ]
         for i, (key, label, color) in enumerate(specs):
             card = widgets.card(self.cards_frame, fg_color=theme.CARD)
@@ -50,6 +51,7 @@ class DashboardView(BaseView):
     def _render_stats(self, stats):
         self.stat_cards["connected"].configure(text=f"{stats['connected']}/{stats['accounts']}")
         self.stat_cards["loops_running"].configure(text=str(stats["loops_running"]))
+        self.stat_cards["warming"].configure(text=str(stats.get("warming", 0)))
         self.stat_cards["posts_24h"].configure(text=str(stats["posts_24h"]))
         self.stat_cards["scheduled_pending"].configure(text=str(stats["scheduled_pending"]))
 

@@ -120,6 +120,122 @@ def verify_session(account) -> dict[str, Any]:
     }
 
 
+def load_session_file(path: str, proxy_url: str | None = None) -> dict[str, Any]:
+    """Carrega um session.json da instagrapi, valida e devolve settings + perfil."""
+    with open(path, "r", encoding="utf-8") as fh:
+        settings = json.load(fh)
+    cl = build_client(proxy_url, settings)
+    try:
+        info = cl.account_info()
+    except Exception as exc:  # noqa: BLE001
+        raise InstagramError(_friendly(exc)) from exc
+    return {
+        "settings": cl.get_settings(),
+        "username": info.username,
+        "full_name": getattr(info, "full_name", ""),
+        "follower_count": getattr(info, "follower_count", 0),
+        "media_count": getattr(info, "media_count", 0),
+    }
+
+
+def warm_session(
+    account,
+    *,
+    likes: int = 3,
+    stories: int = 3,
+    follows: int = 0,
+    saves: int = 0,
+    hashtags: list[str] | None = None,
+) -> tuple[dict, dict]:
+    """Simula atividade humana leve para 'aquecer' a conta.
+
+    Usa várias funções da instagrapi: feed, hashtag, curtidas, stories, follows, saves.
+    Cada ação é protegida — uma falha isolada não derruba o aquecimento.
+    Retorna (resumo, settings).
+    """
+    import random
+    import time
+
+    if not account.session_json:
+        raise InstagramError("Conta sem sessão. Conecte antes de aquecer.")
+
+    settings = json.loads(account.session_json)
+    cl = _client_from_account(account, settings)
+    summary = {"feed": False, "liked": 0, "stories": 0, "followed": 0, "saved": 0, "errors": 0}
+
+    def pause(a=2.0, b=5.0):
+        time.sleep(random.uniform(a, b))
+
+    # 1) ler o feed principal
+    try:
+        cl.get_timeline_feed()
+        summary["feed"] = True
+        pause()
+    except Exception:  # noqa: BLE001
+        summary["errors"] += 1
+
+    # 2) coletar mídias de hashtags
+    tags = hashtags or ["reels", "explore", "viral", "foryou"]
+    random.shuffle(tags)
+    medias = []
+    for tag in tags[:2]:
+        try:
+            medias += cl.hashtag_medias_top(tag, amount=12)
+            pause(1.5, 3.5)
+        except Exception:  # noqa: BLE001
+            summary["errors"] += 1
+    random.shuffle(medias)
+
+    # 3) curtir algumas
+    for media in medias[: max(0, likes)]:
+        try:
+            cl.media_like(media.id)
+            summary["liked"] += 1
+            pause()
+        except Exception:  # noqa: BLE001
+            summary["errors"] += 1
+
+    # 4) salvar algumas
+    for media in medias[: max(0, saves)]:
+        try:
+            cl.media_save(media.id)
+            summary["saved"] += 1
+            pause(1.0, 2.5)
+        except Exception:  # noqa: BLE001
+            summary["errors"] += 1
+
+    # autores únicos para stories/follows
+    authors = []
+    seen = set()
+    for media in medias:
+        uid = getattr(getattr(media, "user", None), "pk", None)
+        if uid and uid not in seen:
+            seen.add(uid)
+            authors.append(uid)
+
+    # 5) assistir stories
+    for uid in authors[: max(0, stories)]:
+        try:
+            st = cl.user_stories(uid)
+            if st:
+                cl.story_seen([s.pk for s in st])
+                summary["stories"] += 1
+                pause()
+        except Exception:  # noqa: BLE001
+            summary["errors"] += 1
+
+    # 6) seguir alguns (opcional)
+    for uid in authors[: max(0, follows)]:
+        try:
+            cl.user_follow(uid)
+            summary["followed"] += 1
+            pause(2.0, 6.0)
+        except Exception:  # noqa: BLE001
+            summary["errors"] += 1
+
+    return summary, cl.get_settings()
+
+
 def post_reel(account, video_path: str, caption: str = "", cover_path: str | None = None) -> dict[str, Any]:
     """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings}."""
     from instagrapi.exceptions import LoginRequired
