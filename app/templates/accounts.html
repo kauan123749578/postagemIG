@@ -4,43 +4,100 @@
 <div class="page-header">
   <div>
     <h1>Contas Instagram</h1>
-    <p class="subtitle">Cadastre todas as suas contas — contingência é configurada em outra página</p>
+    <p class="subtitle">Conecte suas contas via instagrapi — login direto com usuário e senha</p>
   </div>
   <a href="/contingency" class="btn secondary">Configurar contingência →</a>
 </div>
 
-<div class="grid-2">
-  <section class="card glass glow">
-    <h2 id="form-title">Nova conta</h2>
-    <form id="account-form" onsubmit="saveAccount(event)">
+<div class="accounts-grid">
+  <section class="card glass glow account-form-card">
+    <div class="card-head">
+      <h2 id="form-title">Conectar nova conta</h2>
+      <span class="chip chip-accent">instagrapi</span>
+    </div>
+
+    <form id="account-form" onsubmit="saveAccount(event)" autocomplete="off">
       <input type="hidden" id="account-id">
-      <label class="field-label">Nome interno<input id="name" required placeholder="Ex.: pg1"></label>
-      <label class="field-label">Usuário do Instagram (@)<input id="username" placeholder="sem o @"></label>
-      <label class="field-label">Senha<input id="password" type="password" placeholder="deixe em branco se usar sessionid" autocomplete="new-password"></label>
-      <label class="field-label">Código 2FA (opcional)<input id="verification_code" placeholder="só se a conta pedir 2FA"></label>
-      <div class="notice notice-info" style="margin:6px 0 12px">
-        <strong>Login mais estável:</strong> no Chrome abra <strong>instagram.com</strong> logado →
-        F12 → Application → Cookies → copie o valor de <strong>sessionid</strong> e cole abaixo.
+
+      <label class="field-label">Nome interno
+        <input id="name" required placeholder="Ex.: Conta principal">
+      </label>
+
+      <div class="login-fields">
+        <label class="field-label">Usuário do Instagram
+          <div class="input-prefix">
+            <span class="prefix">@</span>
+            <input id="username" placeholder="seu_usuario" autocomplete="off">
+          </div>
+        </label>
+
+        <label class="field-label">Senha
+          <div class="input-action">
+            <input id="password" type="password" placeholder="senha da conta" autocomplete="new-password">
+            <button type="button" class="pw-toggle" onclick="togglePw('password', this)" title="Mostrar/ocultar">👁</button>
+          </div>
+        </label>
       </div>
-      <label class="field-label">Sessionid do navegador (opcional)<textarea id="sessionid" rows="2" placeholder="cole o sessionid aqui"></textarea></label>
-      <label class="field-label">Proxy<input id="proxy_url" placeholder="http://user:pass@host:port"></label>
-      <div class="row">
-        <label class="field-label">Max/dia<input type="number" id="max_posts_per_day" value="0" min="0" max="500" title="0 = ilimitado"></label>
-        <label class="field-label">Max/hora<input type="number" id="max_posts_per_hour" value="0" min="0" max="100" title="0 = ilimitado"></label>
+
+      <div class="actions" style="margin-top:8px">
+        <button type="submit" class="btn primary btn-lg" id="connect-btn">
+          <span class="btn-icon">🔗</span> Conectar conta
+        </button>
+        <button type="button" class="btn ghost" onclick="resetAccountForm()">Limpar</button>
       </div>
-      <p class="hint">Use <strong>0</strong> em Max/dia ou Max/hora para <strong>sem limite</strong> no painel.</p>
-      <label class="checkbox"><input type="checkbox" id="is_active" checked> Conta ativa</label>
-      <div class="actions">
-        <button type="submit" class="btn primary">Salvar</button>
-        <button type="button" class="btn secondary" onclick="resetAccountForm()">Limpar</button>
+
+      <button type="button" class="advanced-toggle" id="advanced-toggle" onclick="toggleAdvanced()">
+        <span>Opções avançadas</span><span class="chev">⌄</span>
+      </button>
+
+      <div class="advanced-panel" id="advanced-panel">
+        <div class="notice notice-info">
+          <strong>Login alternativo (mais estável):</strong> no Chrome abra
+          <strong>instagram.com</strong> logado → F12 → Application → Cookies →
+          copie o valor de <strong>sessionid</strong> e cole abaixo.
+        </div>
+        <label class="field-label">Sessionid do navegador (opcional)
+          <textarea id="sessionid" rows="2" placeholder="cole o sessionid aqui"></textarea>
+        </label>
+        <label class="field-label">Proxy (recomendado em produção)
+          <input id="proxy_url" placeholder="http://user:pass@host:port">
+        </label>
+        <div class="row">
+          <label class="field-label">Máx/dia<input type="number" id="max_posts_per_day" value="0" min="0" max="500" title="0 = ilimitado"></label>
+          <label class="field-label">Máx/hora<input type="number" id="max_posts_per_hour" value="0" min="0" max="100" title="0 = ilimitado"></label>
+        </div>
+        <p class="hint">Use <strong>0</strong> para <strong>sem limite</strong> no painel.</p>
+        <label class="checkbox"><input type="checkbox" id="is_active" checked> Conta ativa</label>
       </div>
     </form>
   </section>
 
-  <section class="card glass glow">
-    <h2>Contas cadastradas</h2>
-    <div id="accounts-list"></div>
+  <section class="card glass account-list-card">
+    <div class="card-head">
+      <h2>Contas conectadas</h2>
+      <span class="chip" id="accounts-count">0</span>
+    </div>
+    <div id="accounts-list" class="accounts-list"></div>
   </section>
+</div>
+
+<!-- Modal 2FA -->
+<div class="modal-overlay hidden" id="twofa-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-icon">🔐</div>
+      <div>
+        <h3>Verificação em duas etapas</h3>
+        <p class="modal-sub" id="twofa-sub">Digite o código de 6 dígitos do seu app autenticador ou SMS.</p>
+      </div>
+    </div>
+    <input id="twofa-code" class="code-input" inputmode="numeric" maxlength="8" placeholder="000000"
+           onkeydown="if(event.key==='Enter')submit2fa()">
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="close2fa()">Cancelar</button>
+      <button class="btn primary" id="twofa-submit" onclick="submit2fa()">Confirmar e conectar</button>
+    </div>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}

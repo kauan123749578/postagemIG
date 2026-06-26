@@ -32,7 +32,7 @@ from app.services.auth import (
 )
 from app.services.cover import require_batch_cover
 from app.services.health import check_account_health, refresh_account_insights
-from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account, login_account
+from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, TwoFactorRequiredError, client_from_account, login_account
 from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.loop_worker import start_loop_worker
 from app.services.loop_stagger import (
@@ -165,14 +165,18 @@ class AccountUpdate(BaseModel):
     name: str | None = None
     username: str | None = None
     password: str | None = None
-    sessionid: str | None = None
-    verification_code: str | None = None
     proxy_url: str | None = None
     max_posts_per_day: int | None = Field(default=None, ge=0, le=500)
     max_posts_per_hour: int | None = Field(default=None, ge=0, le=100)
     default_caption: str | None = None
     is_active: bool | None = None
     fallback_account_id: int | None = None
+
+
+class AccountConnect(BaseModel):
+    password: str | None = None
+    sessionid: str | None = None
+    verification_code: str | None = None
 
 
 class PostImageRequest(BaseModel):
@@ -579,24 +583,69 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db), user: Adm
     db.add(account)
     db.flush()
 
+    login = _connect_account(
+        db,
+        account,
+        password=body.password or None,
+        sessionid=body.sessionid or None,
+        verification_code=body.verification_code or None,
+    )
+    db.refresh(account)
+    return {"account": _account_dict(account, db), "login": login}
+
+
+def _connect_account(
+    db: Session,
+    account: Account,
+    *,
+    password: str | None = None,
+    sessionid: str | None = None,
+    verification_code: str | None = None,
+) -> dict:
+    """Tenta logar a conta no Instagram e devolve o status da conexão.
+
+    Nunca levanta exceção: o resultado vem no campo ``status``
+    (connected | needs_2fa | error) para o frontend tratar inline.
+    """
     try:
         login_account(
             account,
-            password=body.password or None,
-            sessionid=body.sessionid or None,
-            verification_code=body.verification_code or None,
+            password=password,
+            sessionid=sessionid,
+            verification_code=verification_code,
         )
         account.health_status = "healthy"
         account.health_message = "Conectado via instagrapi"
+        db.commit()
+        return {"status": "connected", "message": "Conta conectada com sucesso"}
+    except TwoFactorRequiredError as exc:
+        account.health_status = "pending"
+        account.health_message = "Aguardando código 2FA"
+        db.commit()
+        return {"status": "needs_2fa", "message": str(exc)}
     except InstagramAPIError as exc:
         account.health_status = "error"
         account.health_message = str(exc)
         db.commit()
-        raise HTTPException(400, f"Conta salva, mas o login falhou: {exc}") from exc
+        return {"status": "error", "message": str(exc)}
 
-    db.commit()
+
+@app.post("/api/accounts/{account_id}/connect")
+def connect_account(account_id: int, body: AccountConnect, db: Session = Depends(get_db)):
+    account = _get_account_or_404(db, account_id)
+    if body.password:
+        account.password_enc = encrypt_secret(body.password)
+        db.flush()
+    password = body.password or decrypt_secret(account.password_enc) or None
+    login = _connect_account(
+        db,
+        account,
+        password=password,
+        sessionid=body.sessionid or None,
+        verification_code=body.verification_code or None,
+    )
     db.refresh(account)
-    return _account_dict(account, db)
+    return {"account": _account_dict(account, db), "login": login}
 
 
 @app.get("/api/accounts/{account_id}")
@@ -646,8 +695,6 @@ def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(g
     data = body.model_dump(exclude_unset=True)
 
     password = data.pop("password", None)
-    sessionid = data.pop("sessionid", None)
-    verification_code = data.pop("verification_code", None)
 
     if data.get("fallback_account_id"):
         _get_account_or_404(db, data["fallback_account_id"])
@@ -660,23 +707,6 @@ def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(g
 
     if password:
         account.password_enc = encrypt_secret(password)
-
-    if sessionid or password or verification_code:
-        login_password = password or decrypt_secret(account.password_enc) or None
-        try:
-            login_account(
-                account,
-                password=login_password,
-                sessionid=(sessionid or None),
-                verification_code=(verification_code or None),
-            )
-            account.health_status = "healthy"
-            account.health_message = "Conectado via instagrapi"
-        except InstagramAPIError as exc:
-            account.health_status = "error"
-            account.health_message = str(exc)
-            db.commit()
-            raise HTTPException(400, f"Falha no login: {exc}") from exc
 
     db.commit()
     db.refresh(account)

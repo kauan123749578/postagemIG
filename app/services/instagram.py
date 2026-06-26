@@ -30,6 +30,10 @@ class InstagramAPIError(Exception):
         self.payload = payload or {}
 
 
+class TwoFactorRequiredError(InstagramAPIError):
+    """A conta tem 2FA ativo e precisa de um código de verificação."""
+
+
 def _wrap(exc: Exception) -> "InstagramAPIError":
     return InstagramAPIError(_friendly(exc), {"ig_exc": exc.__class__.__name__})
 
@@ -286,6 +290,8 @@ def login_account(
     Atualiza account.session_json e account.username. Não faz commit (o caller commita).
     Retorna o perfil básico da conta.
     """
+    from instagrapi.exceptions import TwoFactorRequired
+
     cl = _build_client(account.proxy_url)
 
     try:
@@ -302,6 +308,11 @@ def login_account(
             )
     except InstagramAPIError:
         raise
+    except TwoFactorRequired as exc:
+        raise TwoFactorRequiredError(
+            "Esta conta tem verificação em duas etapas (2FA). Digite o código.",
+            {"ig_exc": "TwoFactorRequired"},
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise _wrap(exc) from exc
 

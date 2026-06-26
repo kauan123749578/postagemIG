@@ -34,8 +34,14 @@ function toast(msg, type = "success") {
 }
 
 function healthBadge(status) {
-  const map = { healthy: "Saudável", warning: "Atenção", error: "Erro", unknown: "?" };
-  return `<span class="badge ${status}">${map[status] || status}</span>`;
+  const map = {
+    healthy: "Conectada",
+    warning: "Atenção",
+    error: "Erro",
+    pending: "Aguardando 2FA",
+    unknown: "Sem sessão",
+  };
+  return `<span class="badge ${status || "unknown"}">${map[status] || status || "—"}</span>`;
 }
 
 function setupDropzone(zoneId, inputId, onFiles) {
@@ -419,19 +425,134 @@ async function loadAccounts() {
 function renderAccountsList() {
   const el = document.getElementById("accounts-list");
   if (!el) return;
-  el.innerHTML = accountsCache.map(a => `
-    <div class="account-item">
-      <div>
-        <strong>${a.name}</strong> @${a.username || "—"}
-        <div class="meta">${healthBadge(a.health_status)} | ${a.usage.unlimited_day ? `${a.usage.posts_last_24h}d ∞` : `${a.usage.posts_last_24h}/${a.max_posts_per_day}d`} | Proxy: ${a.proxy_url ? "sim" : "não"}</div>
+  const count = document.getElementById("accounts-count");
+  if (count) count.textContent = accountsCache.length;
+
+  if (!accountsCache.length) {
+    el.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">📭</div>
+      <p>Nenhuma conta conectada ainda.</p>
+      <span class="hint">Preencha o formulário ao lado e clique em <strong>Conectar conta</strong>.</span>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = accountsCache.map(a => {
+    const initial = (a.username || a.name || "?").charAt(0).toUpperCase();
+    const connected = a.health_status === "healthy";
+    const usage = a.usage.unlimited_day
+      ? `${a.usage.posts_last_24h} posts/24h · ∞`
+      : `${a.usage.posts_last_24h}/${a.max_posts_per_day} por dia`;
+    const connectLabel = connected ? "Reconectar" : "Conectar";
+    return `
+    <div class="account-card ${a.health_status || "unknown"}">
+      <div class="account-avatar">${initial}</div>
+      <div class="account-info">
+        <div class="account-name">${a.name} ${healthBadge(a.health_status)}</div>
+        <div class="account-handle">@${a.username || "sem usuário"}</div>
+        <div class="account-meta">
+          <span title="Publicações">📊 ${usage}</span>
+          <span title="Proxy">${a.proxy_url ? "🛡 Proxy" : "○ Sem proxy"}</span>
+        </div>
+        ${a.health_message && !connected ? `<div class="account-warn">${a.health_message}</div>` : ""}
       </div>
-      <div class="actions">
-        <button class="btn secondary" onclick="editAccount(${a.id})">Editar</button>
-        <button class="btn secondary" onclick="checkHealth(${a.id})">Saúde</button>
-        <button class="btn danger" onclick="deleteAccount(${a.id})">Excluir</button>
+      <div class="account-actions">
+        <button class="btn primary sm" onclick="connectAccount(${a.id})">${connectLabel}</button>
+        <button class="btn secondary sm" onclick="editAccount(${a.id})">Editar</button>
+        <button class="icon-btn" onclick="deleteAccount(${a.id})" title="Excluir">🗑</button>
       </div>
-    </div>
-  `).join("") || "<p class='hint'>Nenhuma conta cadastrada</p>";
+    </div>`;
+  }).join("");
+}
+
+function togglePw(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.type = input.type === "password" ? "text" : "password";
+  if (btn) btn.classList.toggle("on", input.type === "text");
+}
+
+function toggleAdvanced() {
+  const panel = document.getElementById("advanced-panel");
+  const toggle = document.getElementById("advanced-toggle");
+  if (!panel) return;
+  const open = panel.classList.toggle("open");
+  if (toggle) toggle.classList.toggle("open", open);
+}
+
+// --- 2FA modal ---
+let pendingConnect = null; // { id }
+
+function open2fa(accountId, sub) {
+  pendingConnect = { id: accountId };
+  const modal = document.getElementById("twofa-modal");
+  const subEl = document.getElementById("twofa-sub");
+  const code = document.getElementById("twofa-code");
+  if (sub && subEl) subEl.textContent = sub;
+  if (code) code.value = "";
+  if (modal) modal.classList.remove("hidden");
+  setTimeout(() => code && code.focus(), 50);
+}
+
+function close2fa() {
+  pendingConnect = null;
+  const modal = document.getElementById("twofa-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function submit2fa() {
+  if (!pendingConnect) return;
+  const code = document.getElementById("twofa-code").value.trim();
+  if (!code) { toast("Digite o código 2FA", "error"); return; }
+  const btn = document.getElementById("twofa-submit");
+  if (btn) { btn.disabled = true; btn.textContent = "Conectando..."; }
+  try {
+    const res = await api(`/api/accounts/${pendingConnect.id}/connect`, {
+      method: "POST",
+      body: JSON.stringify({ verification_code: code }),
+    });
+    if (res.login.status === "connected") {
+      toast("Conta conectada com sucesso", "success");
+      close2fa();
+      resetAccountForm();
+    } else if (res.login.status === "needs_2fa") {
+      toast("Código incorreto, tente novamente", "error");
+    } else {
+      toast(res.login.message || "Falha ao conectar", "error");
+      close2fa();
+    }
+    loadAccounts();
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Confirmar e conectar"; }
+  }
+}
+
+function handleLoginResult(res, { username } = {}) {
+  const status = res.login.status;
+  if (status === "connected") {
+    toast("Conta conectada com sucesso", "success");
+    resetAccountForm();
+  } else if (status === "needs_2fa") {
+    open2fa(res.account.id, `Digite o código 2FA da conta @${username || res.account.username || ""}.`);
+  } else {
+    toast(res.login.message || "Falha ao conectar a conta", "error");
+  }
+  loadAccounts();
+}
+
+async function connectAccount(id) {
+  const a = accountsCache.find(x => x.id === id);
+  try {
+    const res = await api(`/api/accounts/${id}/connect`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    handleLoginResult(res, { username: a && a.username });
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 function populateAccountSelects() {
@@ -483,8 +604,14 @@ function bindCoverUpload(inputId, previewId, hiddenId, onDone) {
 function resetAccountForm() {
   document.getElementById("account-form").reset();
   document.getElementById("account-id").value = "";
-  document.getElementById("form-title").textContent = "Nova conta";
+  document.getElementById("form-title").textContent = "Conectar nova conta";
   document.getElementById("is_active").checked = true;
+  const btn = document.getElementById("connect-btn");
+  if (btn) btn.innerHTML = '<span class="btn-icon">🔗</span> Conectar conta';
+  const panel = document.getElementById("advanced-panel");
+  if (panel) panel.classList.remove("open");
+  const toggle = document.getElementById("advanced-toggle");
+  if (toggle) toggle.classList.remove("open");
   populateAccountSelects();
 }
 
@@ -496,12 +623,18 @@ function editAccount(id) {
   document.getElementById("name").value = a.name;
   document.getElementById("username").value = a.username || "";
   document.getElementById("password").value = "";
-  document.getElementById("verification_code").value = "";
   document.getElementById("sessionid").value = "";
   document.getElementById("proxy_url").value = a.proxy_url || "";
   document.getElementById("max_posts_per_day").value = a.max_posts_per_day;
   document.getElementById("max_posts_per_hour").value = a.max_posts_per_hour;
   document.getElementById("is_active").checked = a.is_active;
+  const btn = document.getElementById("connect-btn");
+  if (btn) btn.innerHTML = '<span class="btn-icon">💾</span> Salvar alterações';
+  const panel = document.getElementById("advanced-panel");
+  if (panel) panel.classList.add("open");
+  const toggle = document.getElementById("advanced-toggle");
+  if (toggle) toggle.classList.add("open");
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 async function saveAccount(e) {
@@ -509,34 +642,38 @@ async function saveAccount(e) {
   const id = document.getElementById("account-id").value;
   const password = document.getElementById("password").value.trim();
   const sessionid = document.getElementById("sessionid").value.trim();
-  const verificationCode = document.getElementById("verification_code").value.trim();
+  const username = document.getElementById("username").value.trim();
   const body = {
     name: document.getElementById("name").value,
-    username: document.getElementById("username").value,
+    username,
     proxy_url: document.getElementById("proxy_url").value,
     max_posts_per_day: +document.getElementById("max_posts_per_day").value,
     max_posts_per_hour: +document.getElementById("max_posts_per_hour").value,
     is_active: document.getElementById("is_active").checked,
   };
   if (password) body.password = password;
-  if (sessionid) body.sessionid = sessionid;
-  if (verificationCode) body.verification_code = verificationCode;
+
+  const btn = document.getElementById("connect-btn");
   try {
     if (id) {
       await api(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-      toast("Conta atualizada");
-    } else {
-      if (!sessionid && !password) {
-        toast("Informe a senha ou o sessionid para conectar", "error");
-        return;
-      }
-      await api("/api/accounts", { method: "POST", body: JSON.stringify(body) });
-      toast("Conta conectada");
+      toast("Conta atualizada", "success");
+      resetAccountForm();
+      loadAccounts();
+      return;
     }
-    resetAccountForm();
-    loadAccounts();
+    if (!sessionid && !password) {
+      toast("Informe a senha (ou um sessionid em opções avançadas)", "error");
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.innerHTML = "Conectando..."; }
+    if (sessionid) body.sessionid = sessionid;
+    const res = await api("/api/accounts", { method: "POST", body: JSON.stringify(body) });
+    handleLoginResult(res, { username });
   } catch (err) {
     toast(err.message, "error");
+  } finally {
+    if (btn) { btn.disabled = false; if (!document.getElementById("account-id").value) btn.innerHTML = '<span class="btn-icon">🔗</span> Conectar conta'; }
   }
 }
 
