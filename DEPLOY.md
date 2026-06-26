@@ -1,6 +1,6 @@
 # Deploy na Railway
 
-Guia rápido para subir o **Postagem IG** na Railway e testar publicação de Reels.
+Guia rápido para subir o **Postagem IG** na Railway e testar publicação de Reels via **instagrapi**.
 
 ## 1. Criar repositório no GitHub
 
@@ -8,7 +8,7 @@ Guia rápido para subir o **Postagem IG** na Railway e testar publicação de Re
 cd c:\Users\kauan\Downloads\postagemIG
 git init
 git add .
-git commit -m "Postagem IG - painel Meta API"
+git commit -m "Postagem IG - painel instagrapi"
 git branch -M main
 git remote add origin https://github.com/SEU_USUARIO/postagemIG.git
 git push -u origin main
@@ -33,7 +33,7 @@ git push -u origin main
 2. Clique em **Generate Domain**
 3. Anote a URL: `https://seu-app.up.railway.app`
 
-A variável `RAILWAY_PUBLIC_DOMAIN` é injetada automaticamente — o app usa ela para gerar URLs dos vídeos para a Meta.
+O domínio é usado pelo painel para exibir mídias enviadas (`/media/videos/...`).
 
 ---
 
@@ -45,7 +45,7 @@ A variável `RAILWAY_PUBLIC_DOMAIN` é injetada automaticamente — o app usa el
 4. Redeploy o postagemIG
 
 O app detecta `DATABASE_URL` automaticamente e usa PostgreSQL em vez de SQLite.
-Contas, tokens, agendamentos, loops e logs ficam no Postgres — **não somem no redeploy**.
+Contas, sessões, agendamentos, loops e logs ficam no Postgres — **não somem no redeploy**.
 
 ---
 
@@ -59,6 +59,7 @@ O Postgres guarda só o banco. **Vídeos** precisam de volume no serviço postag
 
 Isso persiste:
 - Vídeos uploadados (`/data/uploads/`)
+- Sessões instagrapi (no banco Postgres)
 
 ---
 
@@ -68,7 +69,7 @@ Na aba **Variables** do serviço, adicione:
 
 | Variável | Valor |
 |----------|-------|
-| `SECRET_KEY` | Chave aleatória longa (ex: output de `openssl rand -hex 32`) |
+| `SECRET_KEY` | Chave aleatória longa (ex: output de `openssl rand -hex 32`) — cifra senhas das contas |
 | `ADMIN_USERNAME` | `admin` |
 | `ADMIN_PASSWORD` | Senha forte (mín. 12 caracteres) |
 | `DATA_DIR` | `/data` |
@@ -89,14 +90,12 @@ Após o deploy:
 
 1. Acesse `https://seu-app.up.railway.app/login`
 2. Entre com `ADMIN_USERNAME` / `ADMIN_PASSWORD`
-3. **Contas** → cadastre IG User ID + Access Token
-4. **Mídia** → upload do vídeo em lote
-5. **Publicar** → Reel → publicar
+3. **Contas** → conecte com **sessionid** do navegador (recomendado) ou usuário/senha (+ 2FA)
+4. Configure **proxy residencial** por conta (recomendado no Railway)
+5. **Mídia** → upload do vídeo em lote
+6. **Publicar** → Reel → publicar
 
-A Meta vai baixar o vídeo de:
-```
-https://seu-app.up.railway.app/media/videos/arquivo.mp4
-```
+O upload usa o arquivo local em `/data/uploads/videos/` — não depende mais da Meta baixar URL pública.
 
 ---
 
@@ -107,7 +106,7 @@ https://seu-app.up.railway.app/media/videos/arquivo.mp4
 - [ ] Volume montado em `/data` (vídeos)
 - [ ] `SECRET_KEY` e `ADMIN_PASSWORD` configurados
 - [ ] Login no painel funciona
-- [ ] Conta Instagram cadastrada
+- [ ] Conta Instagram conectada (sessão ativa)
 - [ ] Vídeo aparece em **Mídia** após upload
 - [ ] Teste de Reel publicado
 
@@ -117,11 +116,13 @@ https://seu-app.up.railway.app/media/videos/arquivo.mp4
 
 | Erro | Solução |
 |------|---------|
-| Erro 2207076 | URL do vídeo inacessível — confirme domínio público e volume |
-| 401 no login | Verifique `ADMIN_PASSWORD` nas variáveis Railway |
+| Login recusado / Challenge | Use **sessionid** do Chrome (F12 → Application → Cookies) |
+| Sessão expirada | Cole novo sessionid ou salve senha para re-login automático |
+| PleaseWaitFewMinutes | Aguarde alguns minutos; reduza frequência de posts |
+| 401 no login do painel | Verifique `ADMIN_PASSWORD` nas variáveis Railway |
 | Vídeos sumiram | Volume `/data` no serviço postagemIG |
 | Contas sumiram | Vincule `DATABASE_URL` do Postgres ao postagemIG |
-| Token inválido | Gere novo token no Meta Developers |
+| IP bloqueado | Configure **proxy residencial** na conta |
 
 ---
 

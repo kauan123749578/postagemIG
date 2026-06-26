@@ -1,6 +1,6 @@
 # Postagem IG
 
-Painel web para publicar no Instagram via **API oficial da Meta** — Reels, Stories, loop automático e multi-conta.
+Painel web para publicar no Instagram via **instagrapi** — Reels, Stories, loop automático e multi-conta.
 
 ## Deploy na Railway
 
@@ -23,9 +23,11 @@ copy .env.example .env
 python run.py
 ```
 
-> Localhost **não funciona** para publicar — a Meta precisa de URL pública. Use Railway ou ngrok.
+## Login das contas Instagram
 
-## Login padrão
+No painel **Contas**, conecte cada perfil com **sessionid** do navegador (recomendado) ou usuário/senha (+ 2FA se pedir). Use **proxy residencial** por conta em produção.
+
+## Login do painel
 
 Configure no `.env`:
 ```
