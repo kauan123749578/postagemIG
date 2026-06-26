@@ -14,11 +14,16 @@
     <h2 id="form-title">Nova conta</h2>
     <form id="account-form" onsubmit="saveAccount(event)">
       <input type="hidden" id="account-id">
-      <label class="field-label">Nome interno<input id="name" required></label>
-      <label class="field-label">IG User ID<input id="ig_user_id" required></label>
-      <label class="field-label">Access Token<textarea id="access_token" rows="3" required></textarea></label>
+      <label class="field-label">Nome interno<input id="name" required placeholder="Ex.: pg1"></label>
+      <label class="field-label">Usuário do Instagram (@)<input id="username" placeholder="sem o @"></label>
+      <label class="field-label">Senha<input id="password" type="password" placeholder="deixe em branco se usar sessionid" autocomplete="new-password"></label>
+      <label class="field-label">Código 2FA (opcional)<input id="verification_code" placeholder="só se a conta pedir 2FA"></label>
+      <div class="notice notice-info" style="margin:6px 0 12px">
+        <strong>Login mais estável:</strong> no Chrome abra <strong>instagram.com</strong> logado →
+        F12 → Application → Cookies → copie o valor de <strong>sessionid</strong> e cole abaixo.
+      </div>
+      <label class="field-label">Sessionid do navegador (opcional)<textarea id="sessionid" rows="2" placeholder="cole o sessionid aqui"></textarea></label>
       <label class="field-label">Proxy<input id="proxy_url" placeholder="http://user:pass@host:port"></label>
-      <label class="field-label">Username<input id="username"></label>
       <div class="row">
         <label class="field-label">Max/dia<input type="number" id="max_posts_per_day" value="0" min="0" max="500" title="0 = ilimitado"></label>
         <label class="field-label">Max/hora<input type="number" id="max_posts_per_hour" value="0" min="0" max="100" title="0 = ilimitado"></label>

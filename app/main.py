@@ -32,7 +32,8 @@ from app.services.auth import (
 )
 from app.services.cover import require_batch_cover
 from app.services.health import check_account_health, refresh_account_insights
-from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account
+from app.services.instagram import INSTAGRAM_CAPTION_MAX, InstagramAPIError, client_from_account, login_account
+from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.loop_worker import start_loop_worker
 from app.services.loop_stagger import (
     get_active_queue,
@@ -148,12 +149,11 @@ async def security_and_auth(request: Request, call_next):
 
 class AccountCreate(BaseModel):
     name: str
-    ig_user_id: str
-    access_token: str
     username: str = ""
+    password: str = ""
+    sessionid: str = ""
+    verification_code: str = ""
     proxy_url: str = ""
-    graph_api_version: str = "v21.0"
-    graph_host: str = "graph.facebook.com"
     max_posts_per_day: int = Field(default=0, ge=0, le=500)
     max_posts_per_hour: int = Field(default=0, ge=0, le=100)
     default_caption: str = ""
@@ -164,11 +164,10 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: str | None = None
     username: str | None = None
-    ig_user_id: str | None = None
-    access_token: str | None = None
+    password: str | None = None
+    sessionid: str | None = None
+    verification_code: str | None = None
     proxy_url: str | None = None
-    graph_api_version: str | None = None
-    graph_host: str | None = None
     max_posts_per_day: int | None = Field(default=None, ge=0, le=500)
     max_posts_per_hour: int | None = Field(default=None, ge=0, le=100)
     default_caption: str | None = None
@@ -294,7 +293,8 @@ def _account_dict(account: Account, db: Session) -> dict:
         "id": account.id,
         "name": account.name,
         "username": account.username,
-        "ig_user_id": account.ig_user_id,
+        "has_session": bool((account.session_json or "").strip()),
+        "has_password": bool((account.password_enc or "").strip()),
         "proxy_url": account.proxy_url,
         "max_posts_per_day": account.max_posts_per_day,
         "max_posts_per_hour": account.max_posts_per_hour,
@@ -565,24 +565,37 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db), user: Adm
     defaults = app_settings.get_all_settings(db)
     account = Account(
         name=body.name,
-        username=body.username,
-        ig_user_id=body.ig_user_id,
-        access_token=body.access_token,
+        username=(body.username or "").strip().lower(),
         proxy_url=body.proxy_url,
-        graph_api_version=body.graph_api_version,
-        graph_host=body.graph_host,
         max_posts_per_day=body.max_posts_per_day if body.max_posts_per_day is not None else int(defaults["default_max_posts_per_day"]),
         max_posts_per_hour=body.max_posts_per_hour if body.max_posts_per_hour is not None else int(defaults["default_max_posts_per_hour"]),
         default_caption=body.default_caption[:INSTAGRAM_CAPTION_MAX],
         is_active=body.is_active,
         fallback_account_id=body.fallback_account_id,
     )
+    if body.password:
+        account.password_enc = encrypt_secret(body.password)
     assign_account_owner(account, user)
     db.add(account)
+    db.flush()
+
+    try:
+        login_account(
+            account,
+            password=body.password or None,
+            sessionid=body.sessionid or None,
+            verification_code=body.verification_code or None,
+        )
+        account.health_status = "healthy"
+        account.health_message = "Conectado via instagrapi"
+    except InstagramAPIError as exc:
+        account.health_status = "error"
+        account.health_message = str(exc)
+        db.commit()
+        raise HTTPException(400, f"Conta salva, mas o login falhou: {exc}") from exc
+
     db.commit()
     db.refresh(account)
-    check_account_health(db, account)
-    db.commit()
     return _account_dict(account, db)
 
 
@@ -631,12 +644,40 @@ def update_contingency(body: ContingencyUpdate, db: Session = Depends(get_db)):
 def update_account(account_id: int, body: AccountUpdate, db: Session = Depends(get_db)):
     account = _get_account_or_404(db, account_id)
     data = body.model_dump(exclude_unset=True)
+
+    password = data.pop("password", None)
+    sessionid = data.pop("sessionid", None)
+    verification_code = data.pop("verification_code", None)
+
     if data.get("fallback_account_id"):
         _get_account_or_404(db, data["fallback_account_id"])
+    if "username" in data and data["username"]:
+        data["username"] = data["username"].strip().lower()
     if "default_caption" in data and data["default_caption"] is not None:
         data["default_caption"] = data["default_caption"][:INSTAGRAM_CAPTION_MAX]
     for key, value in data.items():
         setattr(account, key, value)
+
+    if password:
+        account.password_enc = encrypt_secret(password)
+
+    if sessionid or password or verification_code:
+        login_password = password or decrypt_secret(account.password_enc) or None
+        try:
+            login_account(
+                account,
+                password=login_password,
+                sessionid=(sessionid or None),
+                verification_code=(verification_code or None),
+            )
+            account.health_status = "healthy"
+            account.health_message = "Conectado via instagrapi"
+        except InstagramAPIError as exc:
+            account.health_status = "error"
+            account.health_message = str(exc)
+            db.commit()
+            raise HTTPException(400, f"Falha no login: {exc}") from exc
+
     db.commit()
     db.refresh(account)
     return _account_dict(account, db)

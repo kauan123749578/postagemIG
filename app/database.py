@@ -92,6 +92,21 @@ def migrate_schema() -> None:
     if account_cols and "fallback_account_id" not in account_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE accounts ADD COLUMN fallback_account_id INTEGER"))
+    if account_cols and "password_enc" not in account_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE accounts ADD COLUMN password_enc TEXT DEFAULT ''"))
+    if account_cols and "session_json" not in account_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE accounts ADD COLUMN session_json TEXT DEFAULT ''"))
+    # instagrapi não usa ig_user_id/access_token — libera NOT NULL legado (Postgres)
+    if account_cols and IS_POSTGRES:
+        for legacy_col in ("ig_user_id", "access_token", "graph_api_version", "graph_host"):
+            if legacy_col in account_cols:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE accounts ALTER COLUMN {legacy_col} DROP NOT NULL"))
+                except Exception:
+                    pass
     if account_cols and "owner_user_id" not in account_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE accounts ADD COLUMN owner_user_id INTEGER"))

@@ -1,0 +1,2 @@
+instagrapi
+moviepy==2.2.1

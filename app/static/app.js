@@ -494,10 +494,11 @@ function editAccount(id) {
   document.getElementById("account-id").value = a.id;
   document.getElementById("form-title").textContent = "Editar conta";
   document.getElementById("name").value = a.name;
-  document.getElementById("ig_user_id").value = a.ig_user_id;
-  document.getElementById("access_token").value = "••••••••";
-  document.getElementById("proxy_url").value = a.proxy_url || "";
   document.getElementById("username").value = a.username || "";
+  document.getElementById("password").value = "";
+  document.getElementById("verification_code").value = "";
+  document.getElementById("sessionid").value = "";
+  document.getElementById("proxy_url").value = a.proxy_url || "";
   document.getElementById("max_posts_per_day").value = a.max_posts_per_day;
   document.getElementById("max_posts_per_hour").value = a.max_posts_per_hour;
   document.getElementById("is_active").checked = a.is_active;
@@ -506,25 +507,31 @@ function editAccount(id) {
 async function saveAccount(e) {
   e.preventDefault();
   const id = document.getElementById("account-id").value;
-  const token = document.getElementById("access_token").value;
+  const password = document.getElementById("password").value.trim();
+  const sessionid = document.getElementById("sessionid").value.trim();
+  const verificationCode = document.getElementById("verification_code").value.trim();
   const body = {
     name: document.getElementById("name").value,
-    ig_user_id: document.getElementById("ig_user_id").value,
-    proxy_url: document.getElementById("proxy_url").value,
     username: document.getElementById("username").value,
+    proxy_url: document.getElementById("proxy_url").value,
     max_posts_per_day: +document.getElementById("max_posts_per_day").value,
     max_posts_per_hour: +document.getElementById("max_posts_per_hour").value,
     is_active: document.getElementById("is_active").checked,
   };
-  if (token && token !== "••••••••") body.access_token = token;
+  if (password) body.password = password;
+  if (sessionid) body.sessionid = sessionid;
+  if (verificationCode) body.verification_code = verificationCode;
   try {
     if (id) {
       await api(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
       toast("Conta atualizada");
     } else {
-      body.access_token = token;
+      if (!sessionid && !password) {
+        toast("Informe a senha ou o sessionid para conectar", "error");
+        return;
+      }
       await api("/api/accounts", { method: "POST", body: JSON.stringify(body) });
-      toast("Conta criada");
+      toast("Conta conectada");
     }
     resetAccountForm();
     loadAccounts();

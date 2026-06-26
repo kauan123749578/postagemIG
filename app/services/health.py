@@ -14,6 +14,15 @@ def check_account_health(db: Session, account: Account) -> dict:
         "recent_failures": 0,
     }
 
+    if not (account.session_json or "").strip():
+        account.health_status = "error"
+        account.health_message = "Conta sem sessão — faça login (sessionid ou senha)"
+        return {
+            **result,
+            "status": "error",
+            "message": account.health_message,
+        }
+
     try:
         client = client_from_account(account)
         profile = client.get_profile()
@@ -28,12 +37,6 @@ def check_account_health(db: Session, account: Account) -> dict:
             "status": "error",
             "message": str(exc),
         }
-
-    try:
-        client = client_from_account(account)
-        result["api_limit"] = client.get_publishing_limit()
-    except InstagramAPIError as exc:
-        result["api_limit_error"] = str(exc)
 
     recent_errors = (
         db.query(PostLog)

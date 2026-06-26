@@ -1,36 +1,27 @@
-import time
-from dataclasses import dataclass
+"""Camada de integração com o Instagram via instagrapi.
+
+Substitui a antiga Graph API da Meta. Cada conta loga por usuário/senha
+(ou sessionid do navegador), e a sessão é persistida em Account.session_json.
+Os uploads usam o ARQUIVO LOCAL do vídeo/imagem (instagrapi não usa URL pública).
+"""
+import json
+import logging
+import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
+from app.config import DATA_DIR, IMAGES_DIR, VIDEOS_DIR
+from app.services.crypto import decrypt_secret
+
+logger = logging.getLogger("instagram")
+
 INSTAGRAM_CAPTION_MAX = 2200
 
-META_ERROR_HINTS: dict[int, str] = {
-    4: (
-        "Limite de requisições do APP na Meta — muitas contas postando ao mesmo tempo. "
-        "O painel pausa automaticamente; aumente o intervalo entre vídeos (120s+) e reduza loops simultâneos."
-    ),
-    2207076: (
-        "Instagram não conseguiu processar o vídeo. Use MP4 (H.264 + AAC), "
-        "máx. ~100MB, URL pública acessível. Arquivos .mov podem falhar — converta para MP4."
-    ),
-    2207027: "Vídeo muito longo ou formato não suportado para Reels.",
-    36003: "Erro de permissão ou token expirado na API da Meta.",
-}
-
-
-def humanize_instagram_error(message: str, payload: dict | None = None) -> str:
-    payload = payload or {}
-    error = payload.get("error", payload)
-    code = error.get("code") if isinstance(error, dict) else None
-    subcode = error.get("error_subcode") if isinstance(error, dict) else None
-    lookup = subcode or code
-    if lookup in META_ERROR_HINTS:
-        return f"{message} — {META_ERROR_HINTS[lookup]}"
-    if "2207076" in message:
-        return f"{message} — {META_ERROR_HINTS[2207076]}"
-    return message
+TMP_DIR = DATA_DIR / "tmp"
+TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class InstagramAPIError(Exception):
@@ -39,199 +30,192 @@ class InstagramAPIError(Exception):
         self.payload = payload or {}
 
 
-@dataclass
-class AccountCredentials:
-    ig_user_id: str
-    access_token: str
-    graph_api_version: str = "v21.0"
-    graph_host: str = "graph.facebook.com"
-    proxy_url: str = ""
+def _wrap(exc: Exception) -> "InstagramAPIError":
+    return InstagramAPIError(_friendly(exc), {"ig_exc": exc.__class__.__name__})
 
-    @property
-    def base_url(self) -> str:
-        return f"https://{self.graph_host}/{self.graph_api_version}"
+
+def _friendly(exc: Exception) -> str:
+    name = exc.__class__.__name__
+    msg = str(exc) or name
+    hints = {
+        "BadPassword": "Usuário ou senha inválidos (ou IP bloqueado). Tente logar por sessionid.",
+        "TwoFactorRequired": "Conta com 2FA. Informe o código de verificação (2FA).",
+        "ChallengeRequired": "O Instagram pediu verificação extra. Faça login por sessionid do navegador.",
+        "PleaseWaitFewMinutes": "Muitas tentativas. Aguarde alguns minutos antes de tentar de novo.",
+        "LoginRequired": "Sessão expirada. Refaça o login da conta.",
+        "ClientForbiddenError": "Ação bloqueada pelo Instagram. Aguarde e tente mais tarde.",
+        "ClientThrottledError": "Limite do Instagram atingido. Aguarde antes de postar de novo.",
+    }
+    return f"{hints.get(name, msg)}"
+
+
+def _raise_challenge_handler(username, choice):  # noqa: ANN001
+    raise InstagramAPIError(
+        "Verificação extra exigida pelo Instagram. Use login por sessionid do navegador."
+    )
+
+
+def _build_client(proxy_url: str | None = None):
+    # Import tardio: instagrapi é pesado e só precisa em runtime.
+    from instagrapi import Client
+
+    cl = Client()
+    cl.delay_range = [2, 5]
+    cl.challenge_code_handler = _raise_challenge_handler
+    if proxy_url and proxy_url.strip():
+        try:
+            cl.set_proxy(proxy_url.strip())
+        except Exception as exc:  # noqa: BLE001
+            raise InstagramAPIError(f"Proxy inválido: {exc}") from exc
+    return cl
+
+
+def _download_to_tmp(url: str) -> Path:
+    ext = Path(urlparse(url).path).suffix or ".bin"
+    dest = TMP_DIR / f"{uuid.uuid4().hex}{ext}"
+    try:
+        with requests.get(url, stream=True, timeout=120) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as fh:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    if chunk:
+                        fh.write(chunk)
+    except requests.RequestException as exc:
+        raise InstagramAPIError(f"Não foi possível baixar o arquivo: {exc}") from exc
+    return dest
+
+
+def _resolve_local_path(url_or_path: str | None) -> Path | None:
+    """Converte URL pública / caminho em um arquivo local existente."""
+    if not url_or_path:
+        return None
+    value = str(url_or_path).strip()
+    if not value:
+        return None
+
+    # Caminho local direto
+    direct = Path(value)
+    if direct.exists() and direct.is_file():
+        return direct
+
+    parsed = urlparse(value)
+    path_part = parsed.path or value
+    filename = Path(path_part).name
+
+    # Mapeia /media/videos/<file> e /media/images/<file> para o volume local
+    if "/media/videos/" in path_part or "/videos/" in path_part:
+        candidate = VIDEOS_DIR / filename
+        if candidate.exists():
+            return candidate
+    if "/media/images/" in path_part or "/images/" in path_part:
+        candidate = IMAGES_DIR / filename
+        if candidate.exists():
+            return candidate
+
+    # Procura o nome do arquivo nas duas pastas
+    for folder in (VIDEOS_DIR, IMAGES_DIR):
+        candidate = folder / filename
+        if candidate.exists():
+            return candidate
+
+    # URL externa http(s): baixa para tmp
+    if parsed.scheme in ("http", "https"):
+        return _download_to_tmp(value)
+
+    raise InstagramAPIError(f"Arquivo não encontrado para publicar: {filename}")
 
 
 class InstagramClient:
-    POLL_INTERVAL_SECONDS = 5
-    MAX_POLL_ATTEMPTS = 24
+    """Wrapper sobre instagrapi.Client com a mesma interface usada no painel."""
 
-    def __init__(self, creds: AccountCredentials):
-        self.creds = creds
-        self.session = requests.Session()
-        if creds.proxy_url:
-            self.session.proxies.update({
-                "http": creds.proxy_url,
-                "https": creds.proxy_url,
-            })
+    def __init__(self, account):
+        self.account = account
+        self._cl = None
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        url = f"{self.creds.base_url}/{path.lstrip('/')}"
-        request_params = {"access_token": self.creds.access_token}
-        if params:
-            request_params.update(params)
-
-        response = self.session.request(
-            method=method,
-            url=url,
-            params=request_params,
-            json=json_body,
-            timeout=120,
-        )
-
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise InstagramAPIError(
-                f"Resposta inválida ({response.status_code})",
-                {"status_code": response.status_code, "text": response.text},
-            ) from exc
-
-        if not response.ok or "error" in payload:
-            error = payload.get("error", {})
-            raw_message = error.get("message", response.text)
-            raise InstagramAPIError(humanize_instagram_error(raw_message, payload), payload)
-
-        return payload
-
-    @staticmethod
-    def normalize_caption(caption: str | None) -> str | None:
-        if not caption:
-            return None
-        trimmed = caption.strip()
-        if not trimmed:
-            return None
-        return trimmed[:INSTAGRAM_CAPTION_MAX]
-
-    def get_profile(self) -> dict[str, Any]:
-        return self._request(
-            "GET",
-            self.creds.ig_user_id,
-            params={"fields": "username,name,profile_picture_url,followers_count,media_count"},
-        )
-
-    def get_account_insights(self) -> dict[str, Any]:
-        metrics = "impressions,reach,profile_views"
-        try:
-            return self._request(
-                "GET",
-                f"{self.creds.ig_user_id}/insights",
-                params={"metric": metrics, "period": "day"},
-            )
-        except InstagramAPIError:
-            return self._request(
-                "GET",
-                f"{self.creds.ig_user_id}/insights",
-                params={"metric": "reach,profile_views", "period": "day"},
-            )
-
-    def get_media_insights(self, media_id: str) -> dict[str, Any]:
-        for metrics in ("plays,reach,impressions", "reach,impressions", "impressions"):
+    # --- sessão ---
+    def _load(self):
+        if self._cl is not None:
+            return self._cl
+        cl = _build_client(self.account.proxy_url)
+        if self.account.session_json:
             try:
-                return self._request(
-                    "GET",
-                    f"{media_id}/insights",
-                    params={"metric": metrics},
-                )
-            except InstagramAPIError:
-                continue
-        return {"data": []}
+                cl.set_settings(json.loads(self.account.session_json))
+            except Exception:  # noqa: BLE001
+                logger.warning("Sessão inválida da conta %s, será necessário novo login", self.account.id)
+        self._cl = cl
+        return cl
+
+    def _sync_session(self) -> None:
+        if self._cl is not None:
+            try:
+                self.account.session_json = json.dumps(self._cl.get_settings())
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _relogin(self) -> None:
+        password = decrypt_secret(self.account.password_enc)
+        if not (self.account.username and password):
+            raise InstagramAPIError(
+                "Sessão expirada e sem senha salva. Refaça o login da conta (sessionid ou senha)."
+            )
+        cl = self._cl or _build_client(self.account.proxy_url)
+        try:
+            cl.login(self.account.username, password)
+        except Exception as exc:  # noqa: BLE001
+            raise _wrap(exc) from exc
+        self._cl = cl
+        self._sync_session()
+
+    def _run(self, fn, *args, **kwargs):
+        from instagrapi.exceptions import LoginRequired
+
+        cl = self._load()
+        try:
+            result = fn(cl, *args, **kwargs)
+        except LoginRequired:
+            self._relogin()
+            result = fn(self._cl, *args, **kwargs)
+        except InstagramAPIError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise _wrap(exc) from exc
+        self._sync_session()
+        return result
+
+    # --- leitura ---
+    def get_profile(self) -> dict[str, Any]:
+        def _do(cl):
+            info = cl.account_info()
+            return {
+                "username": info.username,
+                "full_name": getattr(info, "full_name", ""),
+                "follower_count": getattr(info, "follower_count", 0),
+                "media_count": getattr(info, "media_count", 0),
+            }
+
+        return self._run(_do)
 
     def get_publishing_limit(self) -> dict[str, Any]:
-        return self._request(
-            "GET",
-            f"{self.creds.ig_user_id}/content_publishing_limit",
-        )
+        # instagrapi não tem limite de publicação da Meta.
+        return {}
 
-    def create_image_container(
-        self,
-        image_url: str,
-        caption: str | None = None,
-        *,
-        is_carousel_item: bool = False,
-    ) -> str:
-        body: dict[str, Any] = {"image_url": image_url}
-        if caption:
-            body["caption"] = self.normalize_caption(caption)
-        if is_carousel_item:
-            body["is_carousel_item"] = True
-        return self._request("POST", f"{self.creds.ig_user_id}/media", json_body=body)["id"]
+    def get_account_insights(self) -> dict[str, Any]:
+        return {"data": []}
 
-    def create_video_container(
-        self,
-        video_url: str,
-        *,
-        caption: str | None = None,
-        media_type: str = "REELS",
-        is_carousel_item: bool = False,
-        cover_url: str | None = None,
-        thumb_offset: int | None = None,
-        share_to_feed: bool = True,
-        audio_name: str | None = None,
-    ) -> str:
-        body: dict[str, Any] = {"video_url": video_url, "media_type": media_type}
-        if caption:
-            body["caption"] = self.normalize_caption(caption)
-        if is_carousel_item:
-            body["is_carousel_item"] = True
-        if cover_url:
-            body["cover_url"] = cover_url
-        if thumb_offset is not None:
-            body["thumb_offset"] = thumb_offset
-        if audio_name and media_type == "REELS":
-            body["audio_name"] = audio_name.strip()[:100]
-        if media_type == "REELS":
-            body["share_to_feed"] = share_to_feed
-        return self._request("POST", f"{self.creds.ig_user_id}/media", json_body=body)["id"]
+    def get_media_insights(self, media_id: str) -> dict[str, Any]:  # noqa: ARG002
+        return {"data": []}
 
-    def create_carousel_container(self, children_ids: list[str], caption: str | None = None) -> str:
-        body: dict[str, Any] = {
-            "media_type": "CAROUSEL",
-            "children": ",".join(children_ids),
-        }
-        if caption:
-            body["caption"] = self.normalize_caption(caption)
-        return self._request("POST", f"{self.creds.ig_user_id}/media", json_body=body)["id"]
-
-    def get_container_status(self, container_id: str) -> str:
-        payload = self._request("GET", container_id, params={"fields": "status_code,status"})
-        return payload.get("status_code", "UNKNOWN")
-
-    def get_container_details(self, container_id: str) -> dict[str, Any]:
-        return self._request("GET", container_id, params={"fields": "status_code,status"})
-
-    def wait_until_ready(self, container_id: str) -> None:
-        for _ in range(self.MAX_POLL_ATTEMPTS):
-            details = self.get_container_details(container_id)
-            status = details.get("status_code", "UNKNOWN")
-            if status == "FINISHED":
-                return
-            if status in {"ERROR", "EXPIRED"}:
-                detail = details.get("status", status)
-                raise InstagramAPIError(detail, details)
-            if status == "PUBLISHED":
-                return
-            time.sleep(self.POLL_INTERVAL_SECONDS)
-        raise InstagramAPIError("Timeout aguardando processamento do container")
-
-    def publish(self, container_id: str) -> str:
-        return self._request(
-            "POST",
-            f"{self.creds.ig_user_id}/media_publish",
-            json_body={"creation_id": container_id},
-        )["id"]
-
+    # --- publicação ---
     def post_image(self, image_url: str, caption: str | None = None) -> str:
-        container_id = self.create_image_container(image_url, caption)
-        self.wait_until_ready(container_id)
-        return self.publish(container_id)
+        path = _resolve_local_path(image_url)
+        if not path:
+            raise InstagramAPIError("Imagem não encontrada para publicar")
+
+        def _do(cl):
+            media = cl.photo_upload(path, caption or "")
+            return str(media.pk)
+
+        return self._run(_do)
 
     def post_reel(
         self,
@@ -239,62 +223,98 @@ class InstagramClient:
         caption: str | None = None,
         *,
         cover_url: str | None = None,
-        thumb_offset: int | None = None,
-        audio_name: str | None = None,
+        thumb_offset: int | None = None,  # noqa: ARG002 (compat)
+        audio_name: str | None = None,  # noqa: ARG002 (compat)
     ) -> str:
-        container_id = self.create_video_container(
-            video_url,
-            caption=caption,
-            media_type="REELS",
-            cover_url=cover_url,
-            thumb_offset=thumb_offset,
-            audio_name=audio_name,
-        )
-        self.wait_until_ready(container_id)
-        return self.publish(container_id)
+        video_path = _resolve_local_path(video_url)
+        if not video_path:
+            raise InstagramAPIError("Vídeo não encontrado para publicar o Reel")
+        thumb_path = _resolve_local_path(cover_url) if cover_url else None
 
-    def create_story_container(
-        self,
-        *,
-        image_url: str | None = None,
-        video_url: str | None = None,
-    ) -> str:
-        if not image_url and not video_url:
-            raise ValueError("Story precisa de imagem ou vídeo")
-        body: dict[str, Any] = {"media_type": "STORIES"}
-        if image_url:
-            body["image_url"] = image_url
-        if video_url:
-            body["video_url"] = video_url
-        return self._request("POST", f"{self.creds.ig_user_id}/media", json_body=body)["id"]
+        def _do(cl):
+            kwargs = {}
+            if thumb_path:
+                kwargs["thumbnail"] = thumb_path
+            media = cl.clip_upload(video_path, caption or "", **kwargs)
+            return str(media.pk)
+
+        return self._run(_do)
 
     def post_story(self, *, image_url: str | None = None, video_url: str | None = None) -> str:
-        container_id = self.create_story_container(image_url=image_url, video_url=video_url)
-        self.wait_until_ready(container_id)
-        return self.publish(container_id)
+        video_path = _resolve_local_path(video_url) if video_url else None
+        image_path = _resolve_local_path(image_url) if image_url else None
+        if not video_path and not image_path:
+            raise InstagramAPIError("Envie uma imagem ou vídeo para o Story")
+
+        def _do(cl):
+            if video_path:
+                media = cl.video_upload_to_story(video_path)
+            else:
+                media = cl.photo_upload_to_story(image_path)
+            return str(media.pk)
+
+        return self._run(_do)
 
     def post_carousel(self, media_urls: list[str], caption: str | None = None) -> str:
-        children: list[str] = []
+        paths = []
         for url in media_urls:
-            lower = url.lower()
-            if lower.endswith((".mp4", ".mov", ".avi", ".webm")):
-                child = self.create_video_container(url, is_carousel_item=True, media_type="VIDEO")
-            else:
-                child = self.create_image_container(url, is_carousel_item=True)
-            children.append(child)
-            self.wait_until_ready(child)
-        carousel_id = self.create_carousel_container(children, caption)
-        self.wait_until_ready(carousel_id)
-        return self.publish(carousel_id)
+            path = _resolve_local_path(url)
+            if not path:
+                raise InstagramAPIError(f"Item do carrossel não encontrado: {url}")
+            paths.append(path)
+
+        def _do(cl):
+            media = cl.album_upload(paths, caption or "")
+            return str(media.pk)
+
+        return self._run(_do)
 
 
 def client_from_account(account) -> InstagramClient:
-    return InstagramClient(
-        AccountCredentials(
-            ig_user_id=account.ig_user_id,
-            access_token=account.access_token,
-            graph_api_version=account.graph_api_version,
-            graph_host=account.graph_host,
-            proxy_url=account.proxy_url or "",
-        )
-    )
+    return InstagramClient(account)
+
+
+def login_account(
+    account,
+    *,
+    password: str | None = None,
+    sessionid: str | None = None,
+    verification_code: str | None = None,
+) -> dict[str, Any]:
+    """Faz login (sessionid ou usuário/senha) e persiste a sessão na conta.
+
+    Atualiza account.session_json e account.username. Não faz commit (o caller commita).
+    Retorna o perfil básico da conta.
+    """
+    cl = _build_client(account.proxy_url)
+
+    try:
+        if sessionid and sessionid.strip():
+            cl.login_by_sessionid(sessionid.strip())
+        elif account.username and password:
+            if verification_code and verification_code.strip():
+                cl.login(account.username, password, verification_code=verification_code.strip())
+            else:
+                cl.login(account.username, password)
+        else:
+            raise InstagramAPIError(
+                "Informe o sessionid OU usuário + senha para conectar a conta."
+            )
+    except InstagramAPIError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _wrap(exc) from exc
+
+    try:
+        info = cl.account_info()
+        account.username = info.username or account.username
+    except Exception as exc:  # noqa: BLE001
+        raise _wrap(exc) from exc
+
+    account.session_json = json.dumps(cl.get_settings())
+    return {
+        "username": info.username,
+        "full_name": getattr(info, "full_name", ""),
+        "follower_count": getattr(info, "follower_count", 0),
+        "media_count": getattr(info, "media_count", 0),
+    }

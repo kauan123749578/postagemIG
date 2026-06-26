@@ -94,11 +94,24 @@ def get_status() -> dict:
 
 
 def is_app_rate_limit_error(exc: Exception) -> bool:
+    # instagrapi: nomes de exceção indicam throttle/limite
+    name = exc.__class__.__name__
+    if name in ("PleaseWaitFewMinutes", "ClientThrottledError", "RateLimitError"):
+        return True
     payload = getattr(exc, "payload", None) or {}
-    error = payload.get("error", payload) if isinstance(payload, dict) else {}
-    if isinstance(error, dict):
-        code = error.get("code")
-        if code == 4 or str(code) == "4":
+    if isinstance(payload, dict):
+        if payload.get("ig_exc") in ("PleaseWaitFewMinutes", "ClientThrottledError", "RateLimitError"):
             return True
+        error = payload.get("error", payload)
+        if isinstance(error, dict):
+            code = error.get("code")
+            if code == 4 or str(code) == "4":
+                return True
     msg = str(exc).lower()
-    return "application request limit" in msg or "(#4)" in msg
+    return (
+        "application request limit" in msg
+        or "(#4)" in msg
+        or "wait a few minutes" in msg
+        or "please wait" in msg
+        or "rate limit" in msg
+    )
