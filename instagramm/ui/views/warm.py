@@ -29,10 +29,14 @@ class WarmView(BaseView):
         grid.pack(fill="x")
         for i in range(4):
             grid.grid_columnconfigure(i, weight=1)
-        self.likes = self._num(grid, "Curtidas/ciclo", "3", 0)
-        self.stories = self._num(grid, "Stories/ciclo", "3", 1)
-        self.follows = self._num(grid, "Follows/ciclo", "0", 2)
-        self.saves = self._num(grid, "Salvar/ciclo", "0", 3)
+        self.likes = self._num(grid, "Curtidas/ciclo", "3", 0, 0)
+        self.comments = self._num(grid, "Comentários/ciclo", "0", 0, 1)
+        self.stories = self._num(grid, "Ver stories/ciclo", "3", 0, 2)
+        self.story_likes = self._num(grid, "Curtir stories/ciclo", "0", 0, 3)
+        self.follows = self._num(grid, "Seguir/ciclo", "0", 1, 0)
+        self.unfollows = self._num(grid, "Deixar de seguir/ciclo", "0", 1, 1)
+        self.saves = self._num(grid, "Salvar/ciclo", "0", 1, 2)
+        self.scrolls = self._num(grid, "Rolagens de feed/ciclo", "1", 1, 3)
 
         grid2 = ctk.CTkFrame(inner, fg_color="transparent")
         grid2.pack(fill="x", pady=(12, 0))
@@ -68,9 +72,9 @@ class WarmView(BaseView):
                "Comece devagar (poucas ações) em contas novas. Todos os ciclos são enviados ao seu Telegram.")
         ctk.CTkLabel(info, text=txt, justify="left", font=(theme.FONT, 12), text_color=theme.MUTED, wraplength=820).pack(anchor="w", padx=18, pady=(0, 16))
 
-    def _num(self, master, label, default, col):
+    def _num(self, master, label, default, row, col):
         wrap = ctk.CTkFrame(master, fg_color="transparent")
-        wrap.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 6, 0))
+        wrap.grid(row=row, column=col, sticky="ew", padx=(0 if col == 0 else 6, 0), pady=(0 if row == 0 else 8, 0))
         widgets.field_label(wrap, label).pack(anchor="w", pady=(0, 2))
         e = widgets.entry(wrap, default)
         e.insert(0, default)
@@ -105,8 +109,10 @@ class WarmView(BaseView):
         self.app.run_async(lambda: service.get_warm(acc_id), on_done=self._render)
 
     def _render(self, w):
-        for entry, key in [(self.likes, "likes_per_run"), (self.stories, "stories_per_run"),
-                           (self.follows, "follows_per_run"), (self.saves, "saves_per_run"),
+        for entry, key in [(self.likes, "likes_per_run"), (self.comments, "comments_per_run"),
+                           (self.stories, "stories_per_run"), (self.story_likes, "story_likes_per_run"),
+                           (self.follows, "follows_per_run"), (self.unfollows, "unfollows_per_run"),
+                           (self.saves, "saves_per_run"), (self.scrolls, "scrolls_per_run"),
                            (self.interval, "interval_minutes")]:
             entry.delete(0, "end"); entry.insert(0, str(w[key]))
         self.hashtags.delete(0, "end"); self.hashtags.insert(0, w["hashtags"])
@@ -122,9 +128,13 @@ class WarmView(BaseView):
     def _cfg(self):
         return {
             "likes_per_run": _i(self.likes.get()),
+            "comments_per_run": _i(self.comments.get()),
             "stories_per_run": _i(self.stories.get()),
+            "story_likes_per_run": _i(self.story_likes.get()),
             "follows_per_run": _i(self.follows.get()),
+            "unfollows_per_run": _i(self.unfollows.get()),
             "saves_per_run": _i(self.saves.get()),
+            "scrolls_per_run": _i(self.scrolls.get()),
             "interval_minutes": _i(self.interval.get(), 45),
             "hashtags": self.hashtags.get().strip(),
         }

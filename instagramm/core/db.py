@@ -76,6 +76,11 @@ class LoopConfig(Base):
     total_posts: Mapped[int] = mapped_column(Integer, default=0)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str] = mapped_column(Text, default="")
+    # modo: 'continuo' (1 por intervalo) ou 'recorrente' (lote a cada X min)
+    mode: Mapped[str] = mapped_column(String(20), default="continuo")
+    batch_size: Mapped[int] = mapped_column(Integer, default=3)
+    batch_interval_minutes: Mapped[int] = mapped_column(Integer, default=360)
+    batch_remaining: Mapped[int] = mapped_column(Integer, default=0)
 
     account: Mapped["Account"] = relationship(back_populates="loop")
 
@@ -123,6 +128,10 @@ class WarmConfig(Base):
     saves_per_run: Mapped[int] = mapped_column(Integer, default=0)
     interval_minutes: Mapped[int] = mapped_column(Integer, default=45)
     hashtags: Mapped[str] = mapped_column(Text, default="reels,explore,viral,foryou")
+    comments_per_run: Mapped[int] = mapped_column(Integer, default=0)
+    story_likes_per_run: Mapped[int] = mapped_column(Integer, default=0)
+    unfollows_per_run: Mapped[int] = mapped_column(Integer, default=0)
+    scrolls_per_run: Mapped[int] = mapped_column(Integer, default=1)
     total_actions: Mapped[int] = mapped_column(Integer, default=0)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -130,5 +139,57 @@ class WarmConfig(Base):
     last_error: Mapped[str] = mapped_column(Text, default="")
 
 
+class StaggerItem(Base):
+    """Fila escalonada: ativa o loop de cada conta em horários espaçados."""
+    __tablename__ = "stagger_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    activate_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/activated/cancelled
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class DailyMetric(Base):
+    """Contadores diários por tipo de ação, para os gráficos."""
+    __tablename__ = "daily_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # 'YYYY-MM-DD' (local)
+    key: Mapped[str] = mapped_column(String(32), index=True)
+    value: Mapped[int] = mapped_column(Integer, default=0)
+
+
+def _ensure_columns() -> None:
+    """Migração leve para SQLite: adiciona colunas novas em tabelas já existentes."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    additions = {
+        "loop_configs": {
+            "mode": "VARCHAR(20) DEFAULT 'continuo'",
+            "batch_size": "INTEGER DEFAULT 3",
+            "batch_interval_minutes": "INTEGER DEFAULT 360",
+            "batch_remaining": "INTEGER DEFAULT 0",
+        },
+        "warm_configs": {
+            "comments_per_run": "INTEGER DEFAULT 0",
+            "story_likes_per_run": "INTEGER DEFAULT 0",
+            "unfollows_per_run": "INTEGER DEFAULT 0",
+            "scrolls_per_run": "INTEGER DEFAULT 1",
+        },
+    }
+    with engine.begin() as conn:
+        for table, cols in additions.items():
+            if table not in tables:
+                continue
+            existing = {c["name"] for c in insp.get_columns(table)}
+            for col, ddl in cols.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    _ensure_columns()

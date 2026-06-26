@@ -40,9 +40,37 @@ class LoopView(BaseView):
         self.interval_entry.insert(0, "120")
         self.interval_entry.pack()
 
-        widgets.field_label(inner, "Legenda padrão do loop").grid(row=1, column=0, columnspan=2, sticky="w", pady=(12, 2))
+        # modo do loop + opções de lote
+        modes = ctk.CTkFrame(inner, fg_color="transparent")
+        modes.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        widgets.field_label(modes, "Modo").pack(anchor="w", pady=(0, 2))
+        self.mode_seg = ctk.CTkSegmentedButton(
+            modes, values=["Contínuo", "Recorrente"], command=lambda _v: self._on_mode_change(),
+            fg_color=theme.CARD2, selected_color=theme.PRIMARY, selected_hover_color=theme.PRIMARY_HOVER,
+            unselected_color=theme.CARD2, text_color=theme.TEXT,
+        )
+        self.mode_seg.set("Contínuo")
+        self.mode_seg.pack(anchor="w")
+
+        self.batch_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        self.batch_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        bcol = ctk.CTkFrame(self.batch_frame, fg_color="transparent")
+        bcol.pack(side="left")
+        widgets.field_label(bcol, "Vídeos por lote").pack(anchor="w", pady=(0, 2))
+        self.batch_size_entry = widgets.entry(bcol, "3", width=120)
+        self.batch_size_entry.insert(0, "3")
+        self.batch_size_entry.pack()
+        icol = ctk.CTkFrame(self.batch_frame, fg_color="transparent")
+        icol.pack(side="left", padx=(12, 0))
+        widgets.field_label(icol, "Intervalo entre lotes (min)").pack(anchor="w", pady=(0, 2))
+        self.batch_interval_entry = widgets.entry(icol, "360", width=160)
+        self.batch_interval_entry.insert(0, "360")
+        self.batch_interval_entry.pack()
+        self.batch_frame.grid_remove()  # só aparece no modo recorrente
+
+        widgets.field_label(inner, "Legenda padrão do loop").grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 2))
         self.caption_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
-        self.caption_box.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.caption_box.grid(row=4, column=0, columnspan=2, sticky="ew")
 
         # status + controles
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
@@ -96,15 +124,28 @@ class LoopView(BaseView):
             return
         self.app.run_async(lambda: service.get_loop(acc_id), on_done=self._render_loop)
 
+    def _on_mode_change(self):
+        if self.mode_seg.get() == "Recorrente":
+            self.batch_frame.grid()
+        else:
+            self.batch_frame.grid_remove()
+
     def _render_loop(self, loop):
         self.videos = loop.get("videos", [])
         self.interval_entry.delete(0, "end")
         self.interval_entry.insert(0, str(loop.get("interval_seconds", 120)))
+        self.batch_size_entry.delete(0, "end")
+        self.batch_size_entry.insert(0, str(loop.get("batch_size", 3)))
+        self.batch_interval_entry.delete(0, "end")
+        self.batch_interval_entry.insert(0, str(loop.get("batch_interval_minutes", 360)))
+        self.mode_seg.set("Recorrente" if loop.get("mode") == "recorrente" else "Contínuo")
+        self._on_mode_change()
         self.caption_box.delete("1.0", "end")
         self.caption_box.insert("1.0", loop.get("caption", ""))
         running = loop.get("is_running")
         if running:
-            txt = f"● Loop rodando — {loop.get('total_posts', 0)} posts"
+            modo = "recorrente" if loop.get("mode") == "recorrente" else "contínuo"
+            txt = f"● Loop {modo} rodando — {loop.get('total_posts', 0)} posts"
             if loop.get("last_error"):
                 txt += f" | {loop['last_error']}"
             self.status_label.configure(text=txt, text_color=theme.SUCCESS)
@@ -158,13 +199,21 @@ class LoopView(BaseView):
         self._render_videos()
         self._save_silent()
 
+    def _loop_kwargs(self):
+        return {
+            "mode": "recorrente" if self.mode_seg.get() == "Recorrente" else "continuo",
+            "batch_size": _to_int(self.batch_size_entry.get(), 3, lo=1),
+            "batch_interval_minutes": _to_int(self.batch_interval_entry.get(), 360, lo=5),
+        }
+
     def _save_silent(self):
         acc_id = self._selected_account_id()
         if not acc_id:
             return
         interval = _to_int(self.interval_entry.get(), 120)
         caption = self.caption_box.get("1.0", "end").strip()
-        self.app.run_async(lambda: service.save_loop(acc_id, self.videos, interval, caption))
+        kw = self._loop_kwargs()
+        self.app.run_async(lambda: service.save_loop(acc_id, self.videos, interval, caption, **kw))
 
     def _start(self):
         acc_id = self._selected_account_id()
@@ -176,9 +225,10 @@ class LoopView(BaseView):
             return
         interval = _to_int(self.interval_entry.get(), 120)
         caption = self.caption_box.get("1.0", "end").strip()
+        kw = self._loop_kwargs()
 
         def task():
-            service.save_loop(acc_id, self.videos, interval, caption)
+            service.save_loop(acc_id, self.videos, interval, caption, **kw)
             service.set_loop_running(acc_id, True)
 
         self.app.run_async(task, on_done=lambda _r: (self.app.toast("Loop iniciado", "success"), self._load_loop()))
@@ -191,8 +241,8 @@ class LoopView(BaseView):
                            on_done=lambda _r: (self.app.toast("Loop parado", "info"), self._load_loop()))
 
 
-def _to_int(value, default):
+def _to_int(value, default, lo=30):
     try:
-        return max(30, int(str(value).strip() or default))
+        return max(lo, int(str(value).strip() or default))
     except ValueError:
         return default

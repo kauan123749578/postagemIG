@@ -138,6 +138,12 @@ def load_session_file(path: str, proxy_url: str | None = None) -> dict[str, Any]
     }
 
 
+DEFAULT_COMMENTS = [
+    "🔥", "👏", "incrível!", "top demais", "❤️", "muito bom!", "amei 😍",
+    "perfeito 🔥", "que demais 👏", "sensacional!", "🙌", "show!", "👏👏👏",
+]
+
+
 def warm_session(
     account,
     *,
@@ -145,11 +151,17 @@ def warm_session(
     stories: int = 3,
     follows: int = 0,
     saves: int = 0,
+    comments: int = 0,
+    story_likes: int = 0,
+    unfollows: int = 0,
+    scrolls: int = 1,
     hashtags: list[str] | None = None,
+    comment_pool: list[str] | None = None,
 ) -> tuple[dict, dict]:
-    """Simula atividade humana leve para 'aquecer' a conta.
+    """Simula atividade humana para 'aquecer' a conta.
 
-    Usa várias funções da instagrapi: feed, hashtag, curtidas, stories, follows, saves.
+    Ações (todas opcionais, randomizadas e com delays): rolar feed, curtir,
+    salvar, comentar, ver stories, curtir stories, seguir e deixar de seguir.
     Cada ação é protegida — uma falha isolada não derruba o aquecimento.
     Retorna (resumo, settings).
     """
@@ -161,79 +173,99 @@ def warm_session(
 
     settings = json.loads(account.session_json)
     cl = _client_from_account(account, settings)
-    summary = {"feed": False, "liked": 0, "stories": 0, "followed": 0, "saved": 0, "errors": 0}
+    s = {
+        "scrolls": 0, "liked": 0, "saved": 0, "commented": 0,
+        "story_viewed": 0, "story_liked": 0, "followed": 0, "unfollowed": 0, "errors": 0,
+    }
+    pool = comment_pool or DEFAULT_COMMENTS
 
-    def pause(a=2.0, b=5.0):
+    def pause(a=2.0, b=6.0):
         time.sleep(random.uniform(a, b))
 
-    # 1) ler o feed principal
-    try:
-        cl.get_timeline_feed()
-        summary["feed"] = True
-        pause()
-    except Exception:  # noqa: BLE001
-        summary["errors"] += 1
+    # rolar o feed algumas vezes (simula scroll)
+    for _ in range(max(1, scrolls)):
+        try:
+            cl.get_timeline_feed()
+            s["scrolls"] += 1
+            pause(2.0, 5.0)
+        except Exception:  # noqa: BLE001
+            s["errors"] += 1
 
-    # 2) coletar mídias de hashtags
-    tags = hashtags or ["reels", "explore", "viral", "foryou"]
+    # coletar mídias de hashtags
+    tags = list(hashtags or ["reels", "explore", "viral", "foryou"])
     random.shuffle(tags)
     medias = []
     for tag in tags[:2]:
         try:
-            medias += cl.hashtag_medias_top(tag, amount=12)
+            medias += cl.hashtag_medias_top(tag, amount=15)
             pause(1.5, 3.5)
         except Exception:  # noqa: BLE001
-            summary["errors"] += 1
+            s["errors"] += 1
     random.shuffle(medias)
 
-    # 3) curtir algumas
-    for media in medias[: max(0, likes)]:
-        try:
-            cl.media_like(media.id)
-            summary["liked"] += 1
-            pause()
-        except Exception:  # noqa: BLE001
-            summary["errors"] += 1
-
-    # 4) salvar algumas
-    for media in medias[: max(0, saves)]:
-        try:
-            cl.media_save(media.id)
-            summary["saved"] += 1
-            pause(1.0, 2.5)
-        except Exception:  # noqa: BLE001
-            summary["errors"] += 1
-
-    # autores únicos para stories/follows
-    authors = []
-    seen = set()
-    for media in medias:
-        uid = getattr(getattr(media, "user", None), "pk", None)
+    # autores únicos (para stories/follows)
+    authors, seen = [], set()
+    for m in medias:
+        uid = getattr(getattr(m, "user", None), "pk", None)
         if uid and uid not in seen:
             seen.add(uid)
             authors.append(uid)
 
-    # 5) assistir stories
+    # monta uma fila de ações e embaralha para parecer humano
+    queue: list[tuple] = []
+    for m in medias[: max(0, likes)]:
+        queue.append(("like", m))
+    for m in medias[: max(0, saves)]:
+        queue.append(("save", m))
+    for m in medias[: max(0, comments)]:
+        queue.append(("comment", m))
     for uid in authors[: max(0, stories)]:
-        try:
-            st = cl.user_stories(uid)
-            if st:
-                cl.story_seen([s.pk for s in st])
-                summary["stories"] += 1
-                pause()
-        except Exception:  # noqa: BLE001
-            summary["errors"] += 1
-
-    # 6) seguir alguns (opcional)
+        queue.append(("story_view", uid))
+    for uid in authors[: max(0, story_likes)]:
+        queue.append(("story_like", uid))
     for uid in authors[: max(0, follows)]:
-        try:
-            cl.user_follow(uid)
-            summary["followed"] += 1
-            pause(2.0, 6.0)
-        except Exception:  # noqa: BLE001
-            summary["errors"] += 1
+        queue.append(("follow", uid))
+    random.shuffle(queue)
 
-    return summary, cl.get_settings()
+    for action, target in queue:
+        try:
+            if action == "like":
+                cl.media_like(target.id); s["liked"] += 1
+            elif action == "save":
+                cl.media_save(target.id); s["saved"] += 1
+            elif action == "comment":
+                cl.media_comment(target.id, random.choice(pool)); s["commented"] += 1
+            elif action == "story_view":
+                st = cl.user_stories(target)
+                if st:
+                    cl.story_seen([x.pk for x in st]); s["story_viewed"] += 1
+            elif action == "story_like":
+                st = cl.user_stories(target)
+                if st:
+                    cl.story_like(st[0].id); s["story_liked"] += 1
+            elif action == "follow":
+                cl.user_follow(target); s["followed"] += 1
+        except Exception:  # noqa: BLE001
+            s["errors"] += 1
+        pause()
+
+    # deixar de seguir alguns (de quem a conta já segue)
+    if unfollows > 0:
+        try:
+            uid = cl.user_id
+            following = cl.user_following(uid, amount=max(30, unfollows * 6)) if uid else {}
+            ids = list(following.keys())
+            random.shuffle(ids)
+            for fid in ids[: unfollows]:
+                try:
+                    cl.user_unfollow(fid); s["unfollowed"] += 1
+                    pause(2.0, 6.0)
+                except Exception:  # noqa: BLE001
+                    s["errors"] += 1
+        except Exception:  # noqa: BLE001
+            s["errors"] += 1
+
+    return s, cl.get_settings()
 
 
 def post_reel(account, video_path: str, caption: str = "", cover_path: str | None = None) -> dict[str, Any]:

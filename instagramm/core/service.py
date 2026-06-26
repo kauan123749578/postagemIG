@@ -11,10 +11,19 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core import instagram as ig
-from core import notify
+from core import metrics, notify
 from core.config import IMAGE_EXTENSIONS, IMAGES_DIR, INSTAGRAM_CAPTION_MAX, VIDEO_EXTENSIONS, VIDEOS_DIR
 from core.crypto import decrypt_secret, encrypt_secret
-from core.db import Account, LoopConfig, PostLog, ScheduledPost, SessionLocal, WarmConfig, init_db
+from core.db import (
+    Account,
+    LoopConfig,
+    PostLog,
+    ScheduledPost,
+    SessionLocal,
+    StaggerItem,
+    WarmConfig,
+    init_db,
+)
 
 # device/uuids guardados entre a 1ª tentativa e o envio do código 2FA
 _pending_2fa: dict[int, dict] = {}
@@ -293,6 +302,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
                 status="success",
             ))
             link = f"https://instagram.com/reel/{result.get('code')}" if result.get("code") else ""
+            metrics.bump("post")
             notify.log_event(f"Reel publicado 🎬 {link}".strip(), "success", acc.name)
             return {"ok": True, "media_pk": result["media_pk"], "code": result.get("code", "")}
         except ig.InstagramError as exc:
@@ -305,6 +315,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             ))
             acc.status = "error" if exc.kind != "rate_limit" else acc.status
             acc.status_message = str(exc)
+            metrics.bump("error")
             notify.log_event(f"Falha ao publicar Reel: {exc}", "error", acc.name)
             return {"ok": False, "message": str(exc), "kind": exc.kind}
 
@@ -335,7 +346,11 @@ def get_loop(account_id: int) -> dict:
     with session_scope() as db:
         loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
         if not loop:
-            return {"videos": [], "interval_seconds": 120, "caption": "", "is_running": False, "total_posts": 0, "current_index": 0}
+            return {
+                "videos": [], "interval_seconds": 120, "caption": "", "is_running": False,
+                "total_posts": 0, "current_index": 0, "mode": "continuo",
+                "batch_size": 3, "batch_interval_minutes": 360,
+            }
         return {
             "videos": json.loads(loop.videos_json or "[]"),
             "interval_seconds": loop.interval_seconds,
@@ -344,10 +359,22 @@ def get_loop(account_id: int) -> dict:
             "total_posts": loop.total_posts,
             "current_index": loop.current_index,
             "last_error": loop.last_error,
+            "mode": loop.mode or "continuo",
+            "batch_size": loop.batch_size or 3,
+            "batch_interval_minutes": loop.batch_interval_minutes or 360,
         }
 
 
-def save_loop(account_id: int, videos: list[dict], interval_seconds: int, caption: str = "") -> None:
+def save_loop(
+    account_id: int,
+    videos: list[dict],
+    interval_seconds: int,
+    caption: str = "",
+    *,
+    mode: str = "continuo",
+    batch_size: int = 3,
+    batch_interval_minutes: int = 360,
+) -> None:
     with session_scope() as db:
         loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
         if not loop:
@@ -359,6 +386,9 @@ def save_loop(account_id: int, videos: list[dict], interval_seconds: int, captio
         loop.videos_json = new_videos
         loop.interval_seconds = max(30, int(interval_seconds))
         loop.caption = caption
+        loop.mode = mode if mode in ("continuo", "recorrente") else "continuo"
+        loop.batch_size = max(1, int(batch_size or 1))
+        loop.batch_interval_minutes = max(5, int(batch_interval_minutes or 5))
 
 
 def set_loop_running(account_id: int, running: bool) -> None:
@@ -371,9 +401,12 @@ def set_loop_running(account_id: int, running: bool) -> None:
         if running:
             loop.next_run_at = datetime.now(timezone.utc)
             loop.last_error = ""
+            loop.batch_remaining = 0
         acc = db.get(Account, account_id)
         name = acc.name if acc else ""
-    notify.log_event("Loop contínuo " + ("iniciado" if running else "parado"), "info", name)
+        mode = loop.mode or "continuo"
+    label = "Loop recorrente" if mode == "recorrente" else "Loop contínuo"
+    notify.log_event(label + (" iniciado" if running else " parado"), "info", name)
 
 
 # ---------------- Agendamentos ----------------
@@ -435,6 +468,65 @@ def dashboard_stats() -> dict:
         }
 
 
+# ---------------- Gráficos / métricas ----------------
+
+WARM_KEYS = ["like", "comment", "follow", "unfollow", "story_view", "story_like", "save", "scroll"]
+
+
+def chart_data(days: int = 7) -> dict:
+    """Dados agregados para os gráficos do dashboard."""
+    posts = metrics.series("post", days)
+    warm = metrics.series_sum(WARM_KEYS, days)
+    errors = metrics.series("error", days)
+    breakdown = metrics.totals(WARM_KEYS, days)
+    return {
+        "posts": posts,
+        "warm": warm,
+        "errors": errors,
+        "breakdown": breakdown,
+    }
+
+
+# ---------------- Fila escalonada ----------------
+
+def start_stagger(account_ids: list[int], stagger_minutes: int = 10) -> dict:
+    """Agenda a ativação dos loops das contas, uma a cada X minutos."""
+    if not account_ids:
+        return {"ok": False, "message": "Selecione ao menos uma conta"}
+    step = max(1, int(stagger_minutes))
+    now = datetime.now(timezone.utc)
+    with session_scope() as db:
+        # limpa fila pendente anterior
+        db.query(StaggerItem).filter(StaggerItem.status == "pending").update({"status": "cancelled"})
+        for i, acc_id in enumerate(account_ids):
+            db.add(StaggerItem(account_id=acc_id, activate_at=now + timedelta(minutes=step * i), status="pending"))
+    notify.log_event(f"Fila escalonada iniciada: {len(account_ids)} contas, 1 a cada {step} min", "info")
+    return {"ok": True, "message": f"{len(account_ids)} contas na fila"}
+
+
+def list_stagger() -> list[dict]:
+    with session_scope() as db:
+        rows = (
+            db.query(StaggerItem, Account.name)
+            .join(Account, StaggerItem.account_id == Account.id)
+            .filter(StaggerItem.status.in_(["pending", "activated"]))
+            .order_by(StaggerItem.activate_at)
+            .all()
+        )
+        return [{
+            "id": s.id,
+            "account": name,
+            "activate_at": s.activate_at.isoformat() if s.activate_at else "",
+            "status": s.status,
+        } for s, name in rows]
+
+
+def cancel_stagger() -> None:
+    with session_scope() as db:
+        db.query(StaggerItem).filter(StaggerItem.status == "pending").update({"status": "cancelled"})
+    notify.log_event("Fila escalonada cancelada", "info")
+
+
 # ---------------- Importar sessão ----------------
 
 def import_session(name: str, path: str, proxy_url: str = "") -> dict:
@@ -462,18 +554,28 @@ def import_session(name: str, path: str, proxy_url: str = "") -> dict:
 
 # ---------------- Aquecimento ----------------
 
+_WARM_FIELDS = (
+    "likes_per_run", "stories_per_run", "follows_per_run", "saves_per_run",
+    "comments_per_run", "story_likes_per_run", "unfollows_per_run", "scrolls_per_run",
+    "interval_minutes",
+)
+
+
 def get_warm(account_id: int) -> dict:
     with session_scope() as db:
         w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
         if not w:
             return {
                 "likes_per_run": 3, "stories_per_run": 3, "follows_per_run": 0, "saves_per_run": 0,
+                "comments_per_run": 0, "story_likes_per_run": 0, "unfollows_per_run": 0, "scrolls_per_run": 1,
                 "interval_minutes": 45, "hashtags": "reels,explore,viral,foryou",
                 "is_running": False, "total_actions": 0, "last_summary": "", "last_error": "",
             }
         return {
             "likes_per_run": w.likes_per_run, "stories_per_run": w.stories_per_run,
             "follows_per_run": w.follows_per_run, "saves_per_run": w.saves_per_run,
+            "comments_per_run": w.comments_per_run or 0, "story_likes_per_run": w.story_likes_per_run or 0,
+            "unfollows_per_run": w.unfollows_per_run or 0, "scrolls_per_run": w.scrolls_per_run or 1,
             "interval_minutes": w.interval_minutes, "hashtags": w.hashtags,
             "is_running": w.is_running, "total_actions": w.total_actions,
             "last_summary": w.last_summary, "last_error": w.last_error,
@@ -486,7 +588,7 @@ def save_warm(account_id: int, **cfg) -> None:
         if not w:
             w = WarmConfig(account_id=account_id)
             db.add(w)
-        for key in ("likes_per_run", "stories_per_run", "follows_per_run", "saves_per_run", "interval_minutes"):
+        for key in _WARM_FIELDS:
             if key in cfg and cfg[key] is not None:
                 setattr(w, key, max(0, int(cfg[key])))
         if "hashtags" in cfg and cfg["hashtags"] is not None:
@@ -520,25 +622,35 @@ def run_warm_once(account_id: int) -> dict:
             w = WarmConfig(account_id=account_id)
             db.add(w)
             db.flush()
-        likes, stories = w.likes_per_run, w.stories_per_run
-        follows, saves = w.follows_per_run, w.saves_per_run
+        params = {
+            "likes": w.likes_per_run, "stories": w.stories_per_run,
+            "follows": w.follows_per_run, "saves": w.saves_per_run,
+            "comments": w.comments_per_run or 0, "story_likes": w.story_likes_per_run or 0,
+            "unfollows": w.unfollows_per_run or 0, "scrolls": w.scrolls_per_run or 1,
+        }
         tags = [t.strip() for t in (w.hashtags or "").split(",") if t.strip()]
         name = acc.name
 
     try:
-        summary, settings = ig.warm_session(
-            acc, likes=likes, stories=stories, follows=follows, saves=saves, hashtags=tags or None
-        )
+        summary, settings = ig.warm_session(acc, hashtags=tags or None, **params)
     except ig.InstagramError as exc:
         with session_scope() as db:
             w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
             if w:
                 w.last_error = str(exc)
+        metrics.bump("error")
         notify.log_event(f"Falha no aquecimento: {exc}", "error", name)
         return {"ok": False, "message": str(exc)}
 
-    actions = summary["liked"] + summary["stories"] + summary["followed"] + summary["saved"]
-    text = f"❤️ {summary['liked']} curtidas · 👁 {summary['stories']} stories · ➕ {summary['followed']} follows · 🔖 {summary['saved']} salvos"
+    actions = (summary["liked"] + summary["story_viewed"] + summary["story_liked"]
+               + summary["commented"] + summary["followed"] + summary["unfollowed"] + summary["saved"])
+    text = (f"❤️ {summary['liked']} · 💬 {summary['commented']} · 👁 {summary['story_viewed']} stories · "
+            f"💗 {summary['story_liked']} · ➕ {summary['followed']} · ➖ {summary['unfollowed']} · 🔖 {summary['saved']}")
+    metrics.bump_many({
+        "like": summary["liked"], "comment": summary["commented"], "follow": summary["followed"],
+        "unfollow": summary["unfollowed"], "story_view": summary["story_viewed"],
+        "story_like": summary["story_liked"], "save": summary["saved"], "scroll": summary["scrolls"],
+    })
     with session_scope() as db:
         acc = db.get(Account, account_id)
         if acc:

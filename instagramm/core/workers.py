@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from core import service
-from core.db import Account, LoopConfig, ScheduledPost, SessionLocal, WarmConfig
+from core.db import Account, LoopConfig, ScheduledPost, SessionLocal, StaggerItem, WarmConfig
 
 POLL_SECONDS = 5
 RATE_LIMIT_BACKOFF = 600  # 10 min após limite do Instagram
@@ -44,7 +44,8 @@ class WorkerManager:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                changed = self._process_loops()
+                changed = self._process_stagger()
+                changed = self._process_loops() or changed
                 changed = self._process_scheduled() or changed
                 changed = self._process_warming() or changed
                 if changed:
@@ -83,6 +84,11 @@ class WorkerManager:
                     changed = True
                     continue
 
+                recorrente = (loop.mode or "continuo") == "recorrente"
+                # início de um novo lote
+                if recorrente and (loop.batch_remaining or 0) <= 0:
+                    loop.batch_remaining = max(1, loop.batch_size or 1)
+
                 idx = loop.current_index % len(videos)
                 item = videos[idx]
                 result = service.post_reel_now(
@@ -95,7 +101,16 @@ class WorkerManager:
                     loop.total_posts += 1
                     loop.current_index = (loop.current_index + 1) % len(videos)
                     loop.last_error = ""
-                    loop.next_run_at = _now() + timedelta(seconds=loop.interval_seconds)
+                    if recorrente:
+                        loop.batch_remaining = max(0, (loop.batch_remaining or 1) - 1)
+                        if loop.batch_remaining > 0:
+                            # próximo vídeo do mesmo lote
+                            loop.next_run_at = _now() + timedelta(seconds=loop.interval_seconds)
+                        else:
+                            # lote concluído — espera o intervalo recorrente
+                            loop.next_run_at = _now() + timedelta(minutes=loop.batch_interval_minutes or 360)
+                    else:
+                        loop.next_run_at = _now() + timedelta(seconds=loop.interval_seconds)
                 else:
                     loop.last_error = result.get("message", "Erro")
                     backoff = RATE_LIMIT_BACKOFF if result.get("kind") == "rate_limit" else loop.interval_seconds
@@ -137,6 +152,29 @@ class WorkerManager:
         finally:
             db.close()
         return changed
+
+    # ---- fila escalonada ----
+    def _process_stagger(self) -> bool:
+        account_ids = []
+        db = SessionLocal()
+        try:
+            items = db.query(StaggerItem).filter(StaggerItem.status == "pending").all()
+            for it in items:
+                act = it.activate_at
+                if act and act.tzinfo is None:
+                    act = act.replace(tzinfo=timezone.utc)
+                if act and act > _now():
+                    continue
+                it.status = "activated"
+                account_ids.append(it.account_id)
+            if account_ids:
+                db.commit()
+        finally:
+            db.close()
+
+        for acc_id in account_ids:
+            service.set_loop_running(acc_id, True)
+        return bool(account_ids)
 
     # ---- aquecimento ----
     def _process_warming(self) -> bool:
