@@ -84,8 +84,9 @@ class App(ctk.CTk):
 
         self._nav_accents: dict[str, ctk.CTkFrame] = {}
         for key, label in NAV:
-            item = ctk.CTkFrame(sidebar, fg_color="transparent")
+            item = ctk.CTkFrame(sidebar, fg_color="transparent", height=44)
             item.pack(fill="x", padx=10, pady=2)
+            item.pack_propagate(False)
             accent = ctk.CTkFrame(item, fg_color="transparent", width=3, corner_radius=2)
             accent.pack(side="left", fill="y", padx=(0, 6))
             btn = ctk.CTkButton(
@@ -100,7 +101,7 @@ class App(ctk.CTk):
                 font=(theme.FONT, 13, "bold"),
                 command=lambda k=key: self.show_view(k),
             )
-            btn.pack(side="left", fill="x", expand=True)
+            btn.pack(side="left", fill="both", expand=True)
             self._nav_buttons[key] = btn
             self._nav_accents[key] = accent
 
