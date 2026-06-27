@@ -77,13 +77,8 @@ class App(ctk.CTk):
         sidebar.grid(row=0, column=0, sticky="nsw")
         sidebar.grid_propagate(False)
 
-        brand = ctk.CTkFrame(sidebar, fg_color="transparent")
-        brand.pack(fill="x", padx=18, pady=(24, 18))
-        ctk.CTkLabel(brand, text="📸", font=(theme.FONT, 26)).pack(side="left")
-        bt = ctk.CTkFrame(brand, fg_color="transparent")
-        bt.pack(side="left", padx=10)
-        ctk.CTkLabel(bt, text=APP_NAME, font=(theme.FONT, 15, "bold"), text_color=theme.TEXT).pack(anchor="w")
-        ctk.CTkLabel(bt, text="instagrapi", font=(theme.FONT, 10), text_color=theme.MUTED).pack(anchor="w")
+        # espaço no topo (sem logo)
+        ctk.CTkFrame(sidebar, fg_color="transparent", height=22).pack(fill="x")
 
         for key, label in NAV:
             btn = ctk.CTkButton(

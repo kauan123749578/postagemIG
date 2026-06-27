@@ -559,6 +559,21 @@ _WARM_FIELDS = (
     "comments_per_run", "story_likes_per_run", "unfollows_per_run", "scrolls_per_run",
     "interval_minutes",
 )
+_WARM_HOUR_FIELDS = ("active_start_hour", "active_end_hour")
+
+
+def within_active_window(start_hour: int, end_hour: int, now_hour: int | None = None) -> bool:
+    """Verifica se a hora local atual está dentro da janela de aquecimento."""
+    if now_hour is None:
+        now_hour = datetime.now().hour
+    start = max(0, min(23, int(start_hour)))
+    end = max(0, min(24, int(end_hour)))
+    if start == end:
+        return True  # janela de 24h
+    if start < end:
+        return start <= now_hour < end
+    # janela que cruza a meia-noite (ex.: 22 -> 6)
+    return now_hour >= start or now_hour < end
 
 
 def get_warm(account_id: int) -> dict:
@@ -569,6 +584,7 @@ def get_warm(account_id: int) -> dict:
                 "likes_per_run": 3, "stories_per_run": 3, "follows_per_run": 0, "saves_per_run": 0,
                 "comments_per_run": 0, "story_likes_per_run": 0, "unfollows_per_run": 0, "scrolls_per_run": 1,
                 "interval_minutes": 45, "hashtags": "reels,explore,viral,foryou",
+                "active_start_hour": 8, "active_end_hour": 23,
                 "is_running": False, "total_actions": 0, "last_summary": "", "last_error": "",
             }
         return {
@@ -577,6 +593,8 @@ def get_warm(account_id: int) -> dict:
             "comments_per_run": w.comments_per_run or 0, "story_likes_per_run": w.story_likes_per_run or 0,
             "unfollows_per_run": w.unfollows_per_run or 0, "scrolls_per_run": w.scrolls_per_run or 1,
             "interval_minutes": w.interval_minutes, "hashtags": w.hashtags,
+            "active_start_hour": w.active_start_hour if w.active_start_hour is not None else 8,
+            "active_end_hour": w.active_end_hour if w.active_end_hour is not None else 23,
             "is_running": w.is_running, "total_actions": w.total_actions,
             "last_summary": w.last_summary, "last_error": w.last_error,
         }
@@ -591,9 +609,17 @@ def save_warm(account_id: int, **cfg) -> None:
         for key in _WARM_FIELDS:
             if key in cfg and cfg[key] is not None:
                 setattr(w, key, max(0, int(cfg[key])))
+        for key in _WARM_HOUR_FIELDS:
+            if key in cfg and cfg[key] is not None:
+                setattr(w, key, max(0, min(24, int(cfg[key]))))
         if "hashtags" in cfg and cfg["hashtags"] is not None:
             w.hashtags = cfg["hashtags"]
         w.interval_minutes = max(5, w.interval_minutes or 45)
+
+
+def save_warm_many(account_ids: list[int], **cfg) -> None:
+    for acc_id in account_ids:
+        save_warm(acc_id, **cfg)
 
 
 def set_warm_running(account_id: int, running: bool) -> None:
@@ -609,6 +635,12 @@ def set_warm_running(account_id: int, running: bool) -> None:
         acc = db.get(Account, account_id)
         name = acc.name if acc else ""
     notify.log_event("Aquecimento " + ("iniciado" if running else "parado"), "warm", name)
+
+
+def set_warm_running_many(account_ids: list[int], running: bool) -> int:
+    for acc_id in account_ids:
+        set_warm_running(acc_id, running)
+    return len(account_ids)
 
 
 def run_warm_once(account_id: int) -> dict:

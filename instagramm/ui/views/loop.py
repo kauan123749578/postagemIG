@@ -15,8 +15,8 @@ class LoopView(BaseView):
         self.accounts = []
         self.videos = []  # list[{video_path, cover_path, caption}]
 
-        widgets.title(self, "Loop contínuo", size=24).pack(anchor="w")
-        widgets.subtitle(self, "Publica os vídeos da lista em sequência, repetindo no intervalo definido").pack(anchor="w", pady=(0, 16))
+        widgets.title(self, "Loop de publicação", size=24).pack(anchor="w")
+        widgets.subtitle(self, "Publica os vídeos da lista em sequência (contínuo) ou em lotes (recorrente)").pack(anchor="w", pady=(0, 16))
 
         top = widgets.card(self)
         top.pack(fill="x")
@@ -68,9 +68,21 @@ class LoopView(BaseView):
         self.batch_interval_entry.pack()
         self.batch_frame.grid_remove()  # só aparece no modo recorrente
 
-        widgets.field_label(inner, "Legenda padrão do loop").grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 2))
-        self.caption_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
-        self.caption_box.grid(row=4, column=0, columnspan=2, sticky="ew")
+        # capa única aplicada a todos os vídeos
+        self.cover_path = ""
+        cover_row = ctk.CTkFrame(inner, fg_color="transparent")
+        cover_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        widgets.field_label(cover_row, "Capa para todos os vídeos (opcional)").pack(anchor="w", pady=(0, 2))
+        cover_ctrls = ctk.CTkFrame(cover_row, fg_color="transparent")
+        cover_ctrls.pack(fill="x")
+        widgets.ghost_button(cover_ctrls, "🖼  Escolher capa", self._choose_cover).pack(side="left")
+        self.cover_clear_btn = widgets.danger_button(cover_ctrls, "Remover capa", self._clear_cover)
+        self.cover_label = ctk.CTkLabel(cover_ctrls, text="Nenhuma capa selecionada", font=(theme.FONT, 12), text_color=theme.MUTED)
+        self.cover_label.pack(side="left", padx=12)
+
+        widgets.field_label(inner, "Legenda padrão do loop").grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 2))
+        self.caption_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10, text_color=theme.TEXT)
+        self.caption_box.grid(row=5, column=0, columnspan=2, sticky="ew")
 
         # status + controles
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
@@ -130,8 +142,40 @@ class LoopView(BaseView):
         else:
             self.batch_frame.grid_remove()
 
+    def _update_cover_label(self):
+        if self.cover_path:
+            self.cover_label.configure(text=Path(self.cover_path).name, text_color=theme.TEXT)
+            self.cover_clear_btn.pack(side="left", padx=(8, 0))
+        else:
+            self.cover_label.configure(text="Nenhuma capa selecionada", text_color=theme.MUTED)
+            self.cover_clear_btn.pack_forget()
+
+    def _choose_cover(self):
+        path = filedialog.askopenfilename(title="Escolher capa", filetypes=[("Imagens", "*.jpg *.jpeg *.png *.webp")])
+        if not path:
+            return
+        self.app.toast("Importando capa...", "info")
+
+        def task():
+            return service.import_image(path)
+
+        def done(local):
+            self.cover_path = local
+            self._update_cover_label()
+            self._save_silent()
+            self.app.toast("Capa definida para todos os vídeos", "success")
+
+        self.app.run_async(task, on_done=done)
+
+    def _clear_cover(self):
+        self.cover_path = ""
+        self._update_cover_label()
+        self._save_silent()
+
     def _render_loop(self, loop):
         self.videos = loop.get("videos", [])
+        self.cover_path = next((v.get("cover_path") for v in self.videos if v.get("cover_path")), "")
+        self._update_cover_label()
         self.interval_entry.delete(0, "end")
         self.interval_entry.insert(0, str(loop.get("interval_seconds", 120)))
         self.batch_size_entry.delete(0, "end")
@@ -206,6 +250,10 @@ class LoopView(BaseView):
             "batch_interval_minutes": _to_int(self.batch_interval_entry.get(), 360, lo=5),
         }
 
+    def _videos_payload(self):
+        """Aplica a capa única a todos os vídeos."""
+        return [{**v, "cover_path": self.cover_path} for v in self.videos]
+
     def _save_silent(self):
         acc_id = self._selected_account_id()
         if not acc_id:
@@ -213,7 +261,8 @@ class LoopView(BaseView):
         interval = _to_int(self.interval_entry.get(), 120)
         caption = self.caption_box.get("1.0", "end").strip()
         kw = self._loop_kwargs()
-        self.app.run_async(lambda: service.save_loop(acc_id, self.videos, interval, caption, **kw))
+        videos = self._videos_payload()
+        self.app.run_async(lambda: service.save_loop(acc_id, videos, interval, caption, **kw))
 
     def _start(self):
         acc_id = self._selected_account_id()
@@ -226,9 +275,10 @@ class LoopView(BaseView):
         interval = _to_int(self.interval_entry.get(), 120)
         caption = self.caption_box.get("1.0", "end").strip()
         kw = self._loop_kwargs()
+        videos = self._videos_payload()
 
         def task():
-            service.save_loop(acc_id, self.videos, interval, caption, **kw)
+            service.save_loop(acc_id, videos, interval, caption, **kw)
             service.set_loop_running(acc_id, True)
 
         self.app.run_async(task, on_done=lambda _r: (self.app.toast("Loop iniciado", "success"), self._load_loop()))

@@ -189,6 +189,11 @@ class WorkerManager:
                 acc = db.get(Account, w.account_id)
                 if not acc or not acc.is_active or acc.status != "healthy":
                     continue
+                # respeita a janela de horário (pausa automática fora dela)
+                start = w.active_start_hour if w.active_start_hour is not None else 8
+                end = w.active_end_hour if w.active_end_hour is not None else 23
+                if not service.within_active_window(start, end):
+                    continue
                 nxt = w.next_run_at
                 if nxt and nxt.tzinfo is None:
                     nxt = nxt.replace(tzinfo=timezone.utc)

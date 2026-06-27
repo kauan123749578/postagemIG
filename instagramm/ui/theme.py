@@ -1,22 +1,31 @@
-"""Paleta e helpers visuais do painel (tema azul / branco / preto)."""
+"""Paleta e helpers visuais do painel (tema dark profundo: preto / azul / branco)."""
 
-BG = "#070b12"
-SIDEBAR = "#0b1019"
-CARD = "#101723"
-CARD2 = "#18212f"
-BORDER = "#243044"
-PRIMARY = "#2f81f7"
-PRIMARY_HOVER = "#2563eb"
-PINK = "#38bdf8"
-ACCENT = "#38bdf8"
-TEXT = "#f5f8ff"
-MUTED = "#8b98ac"
-SUCCESS = "#3fb950"
-WARNING = "#d29922"
-DANGER = "#f85149"
-DANGER_HOVER = "#b62324"
+# fundos quase pretos, com camadas sutis
+BG = "#04060a"
+SIDEBAR = "#060810"
+CARD = "#0a0d15"
+CARD2 = "#0f131d"
+CARD3 = "#141926"
+BORDER = "#1a2030"
+
+# azul como cor de destaque
+PRIMARY = "#2f6bff"
+PRIMARY_HOVER = "#2456d6"
+PINK = "#3b82f6"
+ACCENT = "#4f9bff"
+
+# textos mais sóbrios (menos estourados que branco puro)
+TEXT = "#d4dae6"
+TEXT_SOFT = "#aab3c5"
+MUTED = "#5e6878"
+
+SUCCESS = "#2ea043"
+WARNING = "#c08a1e"
+DANGER = "#e5484d"
+DANGER_HOVER = "#a01f23"
 
 FONT = "Segoe UI"
+FONT_MONO = "Consolas"
 
 STATUS_COLORS = {
     "healthy": SUCCESS,

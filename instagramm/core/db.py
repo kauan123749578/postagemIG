@@ -132,6 +132,9 @@ class WarmConfig(Base):
     story_likes_per_run: Mapped[int] = mapped_column(Integer, default=0)
     unfollows_per_run: Mapped[int] = mapped_column(Integer, default=0)
     scrolls_per_run: Mapped[int] = mapped_column(Integer, default=1)
+    # janela ativa (hora local 0-23): fora dela o aquecimento pausa sozinho
+    active_start_hour: Mapped[int] = mapped_column(Integer, default=8)
+    active_end_hour: Mapped[int] = mapped_column(Integer, default=23)
     total_actions: Mapped[int] = mapped_column(Integer, default=0)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -178,6 +181,8 @@ def _ensure_columns() -> None:
             "story_likes_per_run": "INTEGER DEFAULT 0",
             "unfollows_per_run": "INTEGER DEFAULT 0",
             "scrolls_per_run": "INTEGER DEFAULT 1",
+            "active_start_hour": "INTEGER DEFAULT 8",
+            "active_end_hour": "INTEGER DEFAULT 23",
         },
     }
     with engine.begin() as conn:
