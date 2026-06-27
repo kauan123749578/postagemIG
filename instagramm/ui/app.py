@@ -73,31 +73,40 @@ class App(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        sidebar = ctk.CTkFrame(self, fg_color=theme.SIDEBAR, corner_radius=0, width=232)
+        sidebar = ctk.CTkFrame(self, fg_color=theme.SIDEBAR, corner_radius=0, width=246)
         sidebar.grid(row=0, column=0, sticky="nsw")
         sidebar.grid_propagate(False)
 
-        # espaço no topo (sem logo)
-        ctk.CTkFrame(sidebar, fg_color="transparent", height=22).pack(fill="x")
+        # cabeçalho discreto (sem logo)
+        ctk.CTkFrame(sidebar, fg_color="transparent", height=18).pack(fill="x")
+        ctk.CTkLabel(sidebar, text="NAVEGAÇÃO", font=(theme.FONT, 10, "bold"), text_color=theme.MUTED,
+                     anchor="w").pack(fill="x", padx=24, pady=(0, 8))
 
+        self._nav_accents: dict[str, ctk.CTkFrame] = {}
         for key, label in NAV:
+            item = ctk.CTkFrame(sidebar, fg_color="transparent")
+            item.pack(fill="x", padx=10, pady=2)
+            accent = ctk.CTkFrame(item, fg_color="transparent", width=3, corner_radius=2)
+            accent.pack(side="left", fill="y", padx=(0, 6))
             btn = ctk.CTkButton(
-                sidebar,
+                item,
                 text=label,
                 anchor="w",
-                height=44,
+                height=42,
                 corner_radius=10,
                 fg_color="transparent",
                 hover_color=theme.CARD2,
-                text_color=theme.MUTED,
+                text_color=theme.TEXT_SOFT,
                 font=(theme.FONT, 13, "bold"),
                 command=lambda k=key: self.show_view(k),
             )
-            btn.pack(fill="x", padx=12, pady=2)
+            btn.pack(side="left", fill="x", expand=True)
             self._nav_buttons[key] = btn
+            self._nav_accents[key] = accent
 
-        footer = ctk.CTkLabel(sidebar, text=f"v{APP_VERSION}", font=(theme.FONT, 10), text_color=theme.MUTED)
-        footer.pack(side="bottom", pady=14)
+        footer = ctk.CTkLabel(sidebar, text=f"Postagem IG  ·  v{APP_VERSION}", font=(theme.FONT, 10),
+                              text_color=theme.MUTED)
+        footer.pack(side="bottom", pady=16)
 
         # content
         self.content = ctk.CTkFrame(self, fg_color=theme.BG)
@@ -109,12 +118,12 @@ class App(ctk.CTk):
         self.toast_label = ctk.CTkLabel(
             self,
             text="",
-            fg_color=theme.CARD2,
-            corner_radius=10,
+            fg_color=theme.CARD3,
+            corner_radius=12,
             text_color=theme.TEXT,
             font=(theme.FONT, 12, "bold"),
-            height=44,
-            width=320,
+            height=46,
+            width=340,
         )
 
     # ---------- navegação ----------
@@ -128,9 +137,10 @@ class App(ctk.CTk):
         for k, btn in self._nav_buttons.items():
             active = k == key
             btn.configure(
-                fg_color=theme.PRIMARY if active else "transparent",
-                text_color="#ffffff" if active else theme.MUTED,
+                fg_color=theme.PRIMARY_SOFT if active else "transparent",
+                text_color="#ffffff" if active else theme.TEXT_SOFT,
             )
+            self._nav_accents[k].configure(fg_color=theme.PRIMARY if active else "transparent")
 
         if key not in self._views:
             view = VIEW_CLASSES[key](self.content, self)

@@ -581,9 +581,10 @@ def get_warm(account_id: int) -> dict:
         w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
         if not w:
             return {
-                "likes_per_run": 3, "stories_per_run": 3, "follows_per_run": 0, "saves_per_run": 0,
-                "comments_per_run": 0, "story_likes_per_run": 0, "unfollows_per_run": 0, "scrolls_per_run": 1,
-                "interval_minutes": 45, "hashtags": "reels,explore,viral,foryou",
+                # preset recomendado: já pronto para apenas apertar "Iniciar"
+                "likes_per_run": 5, "stories_per_run": 5, "follows_per_run": 1, "saves_per_run": 1,
+                "comments_per_run": 1, "story_likes_per_run": 2, "unfollows_per_run": 0, "scrolls_per_run": 2,
+                "interval_minutes": 40, "hashtags": "reels,explore,viral,foryou,fyp",
                 "active_start_hour": 8, "active_end_hour": 23,
                 "is_running": False, "total_actions": 0, "last_summary": "", "last_error": "",
             }
