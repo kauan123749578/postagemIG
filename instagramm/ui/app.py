@@ -107,7 +107,15 @@ class App(ctk.CTk):
 
         footer = ctk.CTkLabel(sidebar, text=f"Postagem IG  ·  v{APP_VERSION}", font=(theme.FONT, 10),
                               text_color=theme.MUTED)
-        footer.pack(side="bottom", pady=16)
+        footer.pack(side="bottom", pady=(8, 14))
+
+        refresh_btn = ctk.CTkButton(
+            sidebar, text="🔄  Atualizar painel", height=40, corner_radius=10,
+            fg_color=theme.CARD2, hover_color=theme.CARD3, text_color=theme.TEXT,
+            border_width=1, border_color=theme.BORDER, font=(theme.FONT, 12, "bold"),
+            command=self._refresh_panel,
+        )
+        refresh_btn.pack(side="bottom", fill="x", padx=12, pady=(0, 4))
 
         # content
         self.content = ctk.CTkFrame(self, fg_color=theme.BG)
@@ -191,6 +199,15 @@ class App(ctk.CTk):
                 self._views[self._current].refresh()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _refresh_panel(self):
+        """Recarrega a tela atual sob demanda (botão Atualizar painel)."""
+        if self._current and self._current in self._views:
+            try:
+                self._views[self._current].on_show()
+                self.toast("Painel atualizado", "success")
+            except Exception:  # noqa: BLE001
+                self.toast("Não foi possível atualizar", "error")
 
     def _on_close(self):
         try:

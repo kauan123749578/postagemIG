@@ -6,6 +6,7 @@ import requests
 from core import store
 
 API = "https://api.telegram.org/bot{token}/sendMessage"
+ME_API = "https://api.telegram.org/bot{token}/getMe"
 
 
 def is_enabled() -> bool:
@@ -55,5 +56,34 @@ def send(text: str) -> None:
     threading.Thread(target=_send_sync, args=(token, chat_id, text), daemon=True).start()
 
 
+def _get_me(token: str) -> tuple[bool, str]:
+    """Valida o token e devolve o @username do bot."""
+    try:
+        resp = requests.get(ME_API.format(token=token.strip()), timeout=15)
+        data = resp.json()
+        if not data.get("ok"):
+            return False, _friendly(data.get("description", ""))
+        return True, data["result"].get("username", "?")
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
 def test_connection(token: str, chat_id: str) -> tuple[bool, str]:
-    return _send_sync(token, chat_id, "✅ <b>Postagem IG</b> conectado ao Telegram com sucesso!")
+    token, chat_id = token.strip(), chat_id.strip()
+    # 1) confirma o token e descobre qual bot é
+    ok, username = _get_me(token)
+    if not ok:
+        return False, f"Token inválido: {username}"
+
+    # 2) tenta enviar a mensagem de teste
+    sent, msg = _send_sync(token, chat_id, f"✅ <b>Postagem IG</b> conectado! (bot @{username})")
+    if sent:
+        return True, f"Mensagem enviada pelo bot @{username}"
+
+    # 3) erro de acesso ao chat → diz exatamente qual bot precisa estar no grupo
+    if "não encontrado" in msg.lower() or "chat not found" in msg.lower():
+        return False, (
+            f"O bot @{username} não está nesse chat. Adicione exatamente @{username} ao grupo "
+            f"(não outro bot) e confirme que o Chat ID {chat_id} é desse grupo."
+        )
+    return False, msg
