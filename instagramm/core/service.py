@@ -12,7 +12,14 @@ from pathlib import Path
 
 from core import instagram as ig
 from core import metrics, notify
-from core.config import IMAGE_EXTENSIONS, IMAGES_DIR, INSTAGRAM_CAPTION_MAX, VIDEO_EXTENSIONS, VIDEOS_DIR
+from core.config import (
+    IMAGE_EXTENSIONS,
+    IMAGES_DIR,
+    INSTAGRAM_CAPTION_MAX,
+    SESSIONS_DIR,
+    VIDEO_EXTENSIONS,
+    VIDEOS_DIR,
+)
 from core.crypto import decrypt_secret, encrypt_secret
 from core.db import (
     Account,
@@ -44,6 +51,22 @@ def session_scope():
 
 def setup() -> None:
     init_db()
+
+
+def _export_session_file(username: str, settings: dict) -> None:
+    """Salva a sessão também como arquivo em data/sessions (além do banco)."""
+    try:
+        if not username:
+            return
+        safe = "".join(c for c in username if c.isalnum() or c in "._-") or "conta"
+        (SESSIONS_DIR / f"{safe}.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def recent_events(limit: int = 80) -> list[dict]:
+    """Eventos do sistema (conexões, posts, aquecimento, erros)."""
+    return notify.recent_events(limit)
 
 
 # ---------------- Contas ----------------
@@ -184,6 +207,7 @@ def connect_account(
         acc.username = result.get("username") or acc.username
         acc.status = "healthy"
         acc.status_message = "Conectada"
+        _export_session_file(acc.username, result["settings"])
         notify.log_event("Conta conectada", "success", acc.name)
         return {"status": "connected", "message": "Conta conectada com sucesso"}
 
@@ -198,6 +222,7 @@ def check_account(account_id: int) -> dict:
             acc.session_json = json.dumps(result["settings"])
             acc.status = "healthy"
             acc.status_message = "Conectada"
+            _export_session_file(acc.username, result["settings"])
             return {"status": "healthy", "message": "Sessão válida"}
         except ig.InstagramError as exc:
             acc.status = "error"
@@ -293,6 +318,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
         try:
             result = ig.post_reel(acc, video_path, final_caption, cover_path)
             acc.session_json = json.dumps(result["settings"])
+            _export_session_file(acc.username, result["settings"])
             db.add(PostLog(
                 account_id=acc.id,
                 media_id=result["media_pk"],
@@ -548,6 +574,7 @@ def import_session(name: str, path: str, proxy_url: str = "") -> dict:
         acc.username = username or acc.username
         acc.status = "healthy"
         acc.status_message = "Sessão importada"
+        _export_session_file(acc.username, result["settings"])
         notify.log_event("Sessão importada com sucesso", "success", acc.name)
         return {"status": "connected", "message": f"Conta @{username} importada", "account_id": acc.id}
 
@@ -688,6 +715,7 @@ def run_warm_once(account_id: int) -> dict:
         acc = db.get(Account, account_id)
         if acc:
             acc.session_json = json.dumps(settings)
+            _export_session_file(acc.username, settings)
         w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
         if w:
             w.total_actions += actions

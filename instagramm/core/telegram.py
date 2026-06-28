@@ -13,16 +13,32 @@ def is_enabled() -> bool:
     return s.get("telegram_enabled") == "1" and bool(s.get("telegram_token")) and bool(s.get("telegram_chat_id"))
 
 
+def _friendly(desc: str) -> str:
+    d = (desc or "").lower()
+    if "chat not found" in d:
+        return ("Chat não encontrado. Checklist: 1) adicione o bot ao grupo/canal; "
+                "2) num grupo, mande qualquer mensagem ou /start com o bot lá dentro; "
+                "3) confira o Chat ID (grupo/supergrupo começa com -100). "
+                "Em canais, deixe o bot como administrador.")
+    if "bot was blocked" in d or "blocked" in d:
+        return "O bot foi bloqueado. Desbloqueie o bot e envie /start para ele."
+    if "unauthorized" in d:
+        return "Token inválido. Confira o token gerado pelo @BotFather."
+    if "not enough rights" in d or "administrator" in d:
+        return "O bot precisa ser administrador do canal/grupo para enviar mensagens."
+    return desc or "Erro desconhecido"
+
+
 def _send_sync(token: str, chat_id: str, text: str) -> tuple[bool, str]:
     try:
         resp = requests.post(
-            API.format(token=token),
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
+            API.format(token=token.strip()),
+            json={"chat_id": chat_id.strip(), "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=15,
         )
         data = resp.json()
         if not data.get("ok"):
-            return False, data.get("description", "Erro desconhecido")
+            return False, _friendly(data.get("description", ""))
         return True, "ok"
     except requests.RequestException as exc:
         return False, str(exc)

@@ -18,7 +18,14 @@ class SettingsView(BaseView):
         inner.pack(fill="x", padx=22, pady=22)
 
         widgets.title(inner, "Telegram", size=16).pack(anchor="w", pady=(0, 4))
-        widgets.subtitle(inner, "1) Crie um bot com @BotFather  2) Pegue o token  3) Envie /start ao bot  4) Pegue o chat id em @userinfobot").pack(anchor="w", pady=(0, 14))
+        help_text = (
+            "Conversa privada: 1) crie o bot no @BotFather  2) copie o token  "
+            "3) envie /start ao seu bot  4) pegue seu Chat ID no @userinfobot\n"
+            "Grupo/Canal: 1) adicione o bot ao grupo (como admin)  "
+            "2) envie qualquer mensagem no grupo  "
+            "3) o Chat ID do grupo começa com -100 (veja no @userinfobot encaminhando uma msg do grupo)"
+        )
+        widgets.subtitle(inner, help_text).pack(anchor="w", pady=(0, 14))
 
         widgets.field_label(inner, "Token do bot").pack(anchor="w", pady=(0, 2))
         self.token_entry = widgets.entry(inner, "123456:ABC-DEF...")

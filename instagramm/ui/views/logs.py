@@ -1,19 +1,37 @@
-"""Tela Logs: histórico de publicações."""
+"""Tela Logs: eventos do sistema (inclui aquecimento) e publicações."""
 import customtkinter as ctk
 
 from core import service
 from ui import theme, widgets
 from ui.views.base import BaseView
 
+LEVEL_COLORS = {
+    "success": theme.SUCCESS,
+    "error": theme.DANGER,
+    "warm": theme.WARNING,
+    "warning": theme.WARNING,
+    "info": theme.ACCENT,
+}
+
 
 class LogsView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
+        self.mode = "events"
+
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.pack(fill="x")
-        widgets.title(head, "Logs de publicação", size=24).pack(side="left")
-        widgets.ghost_button(head, "Atualizar", self._reload).pack(side="right")
-        widgets.subtitle(self, "Últimas postagens e erros").pack(anchor="w", pady=(0, 16))
+        widgets.title(head, "Logs", size=24).pack(side="left")
+        widgets.ghost_button(head, "Atualizar", self._reload, width=120).pack(side="right")
+        widgets.subtitle(self, "Tudo que acontece no sistema — conexões, posts, aquecimento e erros").pack(anchor="w", pady=(0, 12))
+
+        self.seg = ctk.CTkSegmentedButton(
+            self, values=["Eventos (tudo)", "Publicações"], command=self._on_mode,
+            fg_color=theme.CARD2, selected_color=theme.PRIMARY, selected_hover_color=theme.PRIMARY_HOVER,
+            unselected_color=theme.CARD2, text_color=theme.TEXT,
+        )
+        self.seg.set("Eventos (tudo)")
+        self.seg.pack(anchor="w", pady=(0, 12))
 
         card = widgets.card(self)
         card.pack(fill="both", expand=True)
@@ -26,12 +44,40 @@ class LogsView(BaseView):
     def refresh(self):
         self._reload()
 
-    def _reload(self):
-        self.app.run_async(lambda: service.recent_logs(80), on_done=self._render)
+    def _on_mode(self, value):
+        self.mode = "events" if value.startswith("Eventos") else "posts"
+        self._reload()
 
-    def _render(self, logs):
+    def _reload(self):
+        if self.mode == "events":
+            self.app.run_async(lambda: service.recent_events(120), on_done=self._render_events)
+        else:
+            self.app.run_async(lambda: service.recent_logs(80), on_done=self._render_posts)
+
+    def _clear(self):
         for c in self.list_frame.winfo_children():
             c.destroy()
+
+    def _render_events(self, events):
+        self._clear()
+        if not events:
+            ctk.CTkLabel(self.list_frame, text="Nenhum evento ainda.", text_color=theme.MUTED).pack(pady=30)
+            return
+        for ev in events:
+            color = LEVEL_COLORS.get(ev["level"], theme.MUTED)
+            row = ctk.CTkFrame(self.list_frame, fg_color=theme.CARD2, corner_radius=10)
+            row.pack(fill="x", padx=6, pady=4)
+            ctk.CTkLabel(row, text="●", text_color=color, font=(theme.FONT, 14, "bold")).pack(side="left", padx=(12, 6), pady=8)
+            info = ctk.CTkFrame(row, fg_color="transparent")
+            info.pack(side="left", fill="x", expand=True, pady=6)
+            when = ev["created_at"].replace("T", " ")[:16] if ev["created_at"] else ""
+            head = ev["account"] + "  ·  " + when if ev["account"] else when
+            ctk.CTkLabel(info, text=head, text_color=theme.MUTED, font=(theme.FONT, 11), anchor="w").pack(anchor="w")
+            ctk.CTkLabel(info, text=ev["message"], text_color=theme.TEXT, font=(theme.FONT, 12),
+                         anchor="w", justify="left", wraplength=700).pack(anchor="w")
+
+    def _render_posts(self, logs):
+        self._clear()
         if not logs:
             ctk.CTkLabel(self.list_frame, text="Nenhuma publicação ainda.", text_color=theme.MUTED).pack(pady=30)
             return
