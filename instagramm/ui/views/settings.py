@@ -81,7 +81,10 @@ class SettingsView(BaseView):
         def done(res):
             ok, msg = res
             if ok:
-                self.status.configure(text="✅ Mensagem enviada! Verifique seu Telegram.", text_color=theme.SUCCESS)
+                self.status.configure(
+                    text=f"✅ {msg}. O Telegram pode levar alguns segundos para exibir no app.",
+                    text_color=theme.SUCCESS,
+                )
             else:
                 self.status.configure(text=f"❌ Falhou: {msg}", text_color=theme.DANGER)
 

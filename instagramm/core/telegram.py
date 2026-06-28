@@ -1,5 +1,6 @@
 """Envio de mensagens para o Telegram (logs do sistema)."""
 import threading
+from datetime import datetime
 
 import requests
 
@@ -7,6 +8,8 @@ from core import store
 
 API = "https://api.telegram.org/bot{token}/sendMessage"
 ME_API = "https://api.telegram.org/bot{token}/getMe"
+_TIMEOUT = (5, 12)  # (conectar, ler) — falha rápido se a rede estiver ruim
+_session = requests.Session()
 
 
 def is_enabled() -> bool:
@@ -32,10 +35,10 @@ def _friendly(desc: str) -> str:
 
 def _send_sync(token: str, chat_id: str, text: str) -> tuple[bool, str]:
     try:
-        resp = requests.post(
+        resp = _session.post(
             API.format(token=token.strip()),
             json={"chat_id": chat_id.strip(), "text": text, "parse_mode": "HTML", "disable_web_page_preview": True},
-            timeout=15,
+            timeout=_TIMEOUT,
         )
         data = resp.json()
         if not data.get("ok"):
@@ -59,7 +62,7 @@ def send(text: str) -> None:
 def _get_me(token: str) -> tuple[bool, str]:
     """Valida o token e devolve o @username do bot."""
     try:
-        resp = requests.get(ME_API.format(token=token.strip()), timeout=15)
+        resp = _session.get(ME_API.format(token=token.strip()), timeout=_TIMEOUT)
         data = resp.json()
         if not data.get("ok"):
             return False, _friendly(data.get("description", ""))
@@ -76,9 +79,10 @@ def test_connection(token: str, chat_id: str) -> tuple[bool, str]:
         return False, f"Token inválido: {username}"
 
     # 2) tenta enviar a mensagem de teste
-    sent, msg = _send_sync(token, chat_id, f"✅ <b>Postagem IG</b> conectado! (bot @{username})")
+    stamp = datetime.now().strftime("%H:%M:%S")
+    sent, msg = _send_sync(token, chat_id, f"✅ <b>Postagem IG</b> conectado! (bot @{username}) · {stamp}")
     if sent:
-        return True, f"Mensagem enviada pelo bot @{username}"
+        return True, f"Mensagem aceita às {stamp} pelo bot @{username}"
 
     # 3) erro de acesso ao chat → diz exatamente qual bot precisa estar no grupo
     if "não encontrado" in msg.lower() or "chat not found" in msg.lower():
