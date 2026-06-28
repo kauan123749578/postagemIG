@@ -1,0 +1,42 @@
+==================================================
+   POSTAGEM IG  -  Guia rapido de instalacao
+==================================================
+
+REQUISITO (instalar uma unica vez):
+  - Python 3.10 ou superior
+    Baixe em: https://www.python.org/downloads/
+    IMPORTANTE: na instalacao, marque a caixa "Add Python to PATH".
+
+--------------------------------------------------
+COMO ABRIR O PROGRAMA
+--------------------------------------------------
+  1. De um duplo clique no arquivo:  iniciar.bat
+  2. Na primeira vez ele vai preparar tudo sozinho (pode levar
+     alguns minutos). Aguarde ate o painel abrir.
+  3. Nas proximas vezes, ele abre na hora.
+
+--------------------------------------------------
+PRIMEIROS PASSOS DENTRO DO PAINEL
+--------------------------------------------------
+  1. Aba "Contas": conecte sua conta do Instagram
+     (usuario e senha, ou pelo sessionid).
+  2. Aba "Midia": envie seus videos.
+  3. Aba "Publicar" ou "Loop": comece a postar.
+  4. (Opcional) Aba "Configuracoes": ligue os logs no Telegram.
+
+--------------------------------------------------
+SEUS DADOS
+--------------------------------------------------
+  Tudo que voce criar (contas, videos, configuracoes) fica
+  guardado na pasta "data", ao lado do programa.
+  Faca uma copia dessa pasta "data" de vez em quando para
+  nao perder nada.
+
+--------------------------------------------------
+DICAS PARA EVITAR BLOQUEIO
+--------------------------------------------------
+  - Respeite os intervalos entre as postagens.
+  - Use proxy por conta se for rodar varias contas.
+  - Use a funcao "Aquecer contas" em contas novas.
+
+Qualquer duvida, fale com o suporte.
