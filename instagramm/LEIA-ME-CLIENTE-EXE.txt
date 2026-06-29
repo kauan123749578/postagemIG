@@ -1,0 +1,43 @@
+==================================================
+   POSTAGEM IG  -  Guia rapido (versao executavel)
+==================================================
+
+NAO PRECISA INSTALAR PYTHON.
+Basta dar duplo clique no arquivo:  PostagemIG.exe
+
+--------------------------------------------------
+COMO ABRIR O PROGRAMA
+--------------------------------------------------
+  1. De um duplo clique em:  PostagemIG.exe
+  2. Na primeira vez pode demorar alguns segundos
+     para abrir. Aguarde o painel aparecer.
+  3. Nao apague a pasta "_internal" — ela faz parte
+     do programa.
+
+--------------------------------------------------
+PRIMEIROS PASSOS DENTRO DO PAINEL
+--------------------------------------------------
+  1. Aba "Contas": conecte sua conta do Instagram
+     (usuario e senha, ou pelo sessionid).
+     Proxy (opcional): ip:porta:usuario:senha
+     Ex.: 185.72.240.96:7132:meuuser:minhasenha
+  2. Aba "Midia": envie seus videos.
+  3. Aba "Publicar" ou "Loop": comece a postar.
+  4. (Opcional) Aba "Configuracoes": ligue os logs no Telegram.
+
+--------------------------------------------------
+SEUS DADOS
+--------------------------------------------------
+  Tudo que voce criar (contas, videos, configuracoes) fica
+  guardado na pasta "data", ao lado do PostagemIG.exe.
+  Faca uma copia dessa pasta "data" de vez em quando para
+  nao perder nada.
+
+--------------------------------------------------
+DICAS PARA EVITAR BLOQUEIO
+--------------------------------------------------
+  - Respeite os intervalos entre as postagens.
+  - Use proxy residencial por conta se for rodar varias contas.
+  - Use a funcao "Aquecer contas" em contas novas.
+
+Qualquer duvida, fale com o suporte.
