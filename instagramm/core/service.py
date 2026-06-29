@@ -21,6 +21,7 @@ from core.config import (
     VIDEOS_DIR,
 )
 from core.crypto import decrypt_secret, encrypt_secret
+from core.proxy import normalize_proxy_url
 from core.db import (
     Account,
     LoopConfig,
@@ -118,7 +119,7 @@ def create_account(
         acc = Account(
             name=name.strip(),
             username=(username or "").strip().lstrip("@").lower(),
-            proxy_url=proxy_url.strip(),
+            proxy_url=normalize_proxy_url(proxy_url),
             default_caption=default_caption[:INSTAGRAM_CAPTION_MAX],
             max_posts_per_day=max(0, int(max_posts_per_day or 0)),
             max_posts_per_hour=max(0, int(max_posts_per_hour or 0)),
@@ -141,6 +142,8 @@ def update_account(account_id: int, **fields) -> None:
                 acc.password_enc = encrypt_secret(pwd)
         if "username" in fields and fields["username"] is not None:
             fields["username"] = fields["username"].strip().lstrip("@").lower()
+        if "proxy_url" in fields and fields["proxy_url"] is not None:
+            fields["proxy_url"] = normalize_proxy_url(fields["proxy_url"])
         if "default_caption" in fields and fields["default_caption"] is not None:
             fields["default_caption"] = fields["default_caption"][:INSTAGRAM_CAPTION_MAX]
         for key, value in fields.items():
@@ -558,8 +561,9 @@ def cancel_stagger() -> None:
 
 def import_session(name: str, path: str, proxy_url: str = "") -> dict:
     """Cria uma conta a partir de um arquivo session.json da instagrapi."""
+    proxy_norm = normalize_proxy_url(proxy_url)
     try:
-        result = ig.load_session_file(path, proxy_url or None)
+        result = ig.load_session_file(path, proxy_norm or None)
     except ig.InstagramError as exc:
         return {"status": "error", "message": str(exc)}
 
@@ -570,7 +574,7 @@ def import_session(name: str, path: str, proxy_url: str = "") -> dict:
             acc = Account(name=name.strip() or username or "Conta", username=username)
             db.add(acc)
             db.flush()
-        acc.proxy_url = proxy_url.strip()
+        acc.proxy_url = proxy_norm
         acc.session_json = json.dumps(result["settings"])
         acc.username = username or acc.username
         acc.status = "healthy"

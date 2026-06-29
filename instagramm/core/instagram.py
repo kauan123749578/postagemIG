@@ -28,6 +28,9 @@ def _friendly(exc: Exception) -> str:
     return hints.get(name, str(exc) or name)
 
 
+from core.proxy import normalize_proxy_url
+
+
 def build_client(proxy_url: str | None = None, settings: dict | None = None):
     from instagrapi import Client
 
@@ -39,8 +42,9 @@ def build_client(proxy_url: str | None = None, settings: dict | None = None):
         except Exception:  # noqa: BLE001
             logger.warning("Não foi possível carregar settings de sessão")
     if proxy_url and proxy_url.strip():
+        normalized = normalize_proxy_url(proxy_url)
         try:
-            cl.set_proxy(proxy_url.strip())
+            cl.set_proxy(normalized)
         except Exception as exc:  # noqa: BLE001
             raise InstagramError(f"Proxy inválido: {exc}") from exc
     return cl

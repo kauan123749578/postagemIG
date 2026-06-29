@@ -39,8 +39,8 @@ class AccountsView(BaseView):
         self.fields["name"] = self._add_field(inner, "Nome interno", "Ex.: Conta principal")
         self.fields["username"] = self._add_field(inner, "Usuário do Instagram", "sem o @")
         self.fields["password"] = self._add_field(inner, "Senha", "senha da conta", show="•")
-        self.fields["proxy_url"] = self._add_field(inner, "Proxy (opcional)", "http://user:pass@host:port")
-        widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: http://user:senha@ip:porta  ·  socks5://user:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 0))
+        self.fields["proxy_url"] = self._add_field(inner, "Proxy (opcional)", "ip:porta:usuario:senha")
+        widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: 185.72.240.96:7132:usuario:senha  ·  http://usuario:senha@ip:porta  ·  socks5://usuario:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 0))
 
         widgets.field_label(inner, "Sessionid do navegador (opcional)").pack(anchor="w", pady=(8, 2))
         self.sessionid_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
