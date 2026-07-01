@@ -329,3 +329,65 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         "code": getattr(media, "code", ""),
         "settings": cl.get_settings(),
     }
+
+
+def get_profile(account) -> dict[str, Any]:
+    """Lê bio, link e nome do perfil conectado."""
+    if not account.session_json:
+        raise InstagramError("Conta sem sessão. Conecte antes de editar o perfil.")
+    settings = json.loads(account.session_json)
+    cl = _client_from_account(account, settings)
+    try:
+        info = cl.account_info()
+    except Exception as exc:  # noqa: BLE001
+        raise InstagramError(_friendly(exc)) from exc
+    return {
+        "settings": cl.get_settings(),
+        "username": info.username,
+        "full_name": getattr(info, "full_name", "") or "",
+        "biography": getattr(info, "biography", "") or "",
+        "external_url": getattr(info, "external_url", "") or "",
+        "profile_pic_url": str(getattr(info, "profile_pic_url", "") or ""),
+    }
+
+
+def edit_profile(
+    account,
+    *,
+    biography: str | None = None,
+    external_url: str | None = None,
+    full_name: str | None = None,
+    picture_path: str | None = None,
+) -> dict[str, Any]:
+    """Atualiza bio, link, nome e/ou foto de perfil."""
+    if not account.session_json:
+        raise InstagramError("Conta sem sessão. Conecte antes de editar o perfil.")
+
+    settings = json.loads(account.session_json)
+    cl = _client_from_account(account, settings)
+    changed = []
+
+    try:
+        data: dict[str, str] = {}
+        if biography is not None:
+            data["biography"] = biography.strip()
+        if external_url is not None:
+            data["external_url"] = external_url.strip()
+        if full_name is not None:
+            data["full_name"] = full_name.strip()
+        if data:
+            cl.account_edit(**data)
+            changed.extend(data.keys())
+
+        if picture_path:
+            pic = Path(picture_path)
+            if not pic.is_file():
+                raise InstagramError(f"Foto não encontrada: {picture_path}")
+            cl.account_change_picture(pic)
+            changed.append("profile_picture")
+    except InstagramError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise InstagramError(_friendly(exc)) from exc
+
+    return {"settings": cl.get_settings(), "changed": changed}

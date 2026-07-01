@@ -8,3 +8,4 @@ build/
 dist/
 .venv/
 PostagemIG-Entrega/
+ffmpeg.exe

@@ -89,9 +89,11 @@ class LoopView(BaseView):
         ctrl.pack(fill="x", pady=12)
         self.status_label = ctk.CTkLabel(ctrl, text="Loop parado", font=(theme.FONT, 13, "bold"), text_color=theme.MUTED)
         self.status_label.pack(side="left")
-        self.stop_btn = widgets.danger_button(ctrl, "■ Parar loop", self._stop)
+        self.stop_all_btn = widgets.danger_button(ctrl, "⏹ Parar TODOS os loops", self._stop_all, height=40)
+        self.stop_all_btn.pack(side="right", padx=(8, 0))
+        self.stop_btn = widgets.danger_button(ctrl, "⏹ Parar loop", self._stop, height=40)
         self.stop_btn.pack(side="right", padx=(8, 0))
-        self.start_btn = widgets.primary_button(ctrl, "▶ Iniciar loop", self._start)
+        self.start_btn = widgets.primary_button(ctrl, "▶ Iniciar loop", self._start, height=40)
         self.start_btn.pack(side="right")
 
         # lista de vídeos
@@ -107,6 +109,16 @@ class LoopView(BaseView):
 
     def on_show(self):
         self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
+        self._update_running_badge()
+
+    def _update_running_badge(self):
+        def done(count):
+            if count > 0:
+                self.stop_all_btn.configure(text=f"⏹ Parar TODOS ({count})")
+            else:
+                self.stop_all_btn.configure(text="⏹ Parar TODOS os loops")
+
+        self.app.run_async(service.count_running_loops, on_done=done)
 
     def refresh(self):
         self._load_loop()
@@ -281,14 +293,25 @@ class LoopView(BaseView):
             service.save_loop(acc_id, videos, interval, caption, **kw)
             service.set_loop_running(acc_id, True)
 
-        self.app.run_async(task, on_done=lambda _r: (self.app.toast("Loop iniciado", "success"), self._load_loop()))
+        self.app.run_async(task, on_done=lambda _r: (self.app.toast("Loop iniciado", "success"), self._load_loop(), self._update_running_badge()))
 
     def _stop(self):
         acc_id = self._selected_account_id()
         if not acc_id:
             return
         self.app.run_async(lambda: service.set_loop_running(acc_id, False),
-                           on_done=lambda _r: (self.app.toast("Loop parado", "info"), self._load_loop()))
+                           on_done=lambda _r: (self.app.toast("Loop parado", "info"), self._load_loop(), self._update_running_badge()))
+
+    def _stop_all(self):
+        self.app.run_async(service.stop_all_loops, on_done=self._after_stop_all)
+
+    def _after_stop_all(self, count):
+        if count:
+            self.app.toast(f"{count} loop(s) parado(s)", "success")
+        else:
+            self.app.toast("Nenhum loop estava rodando", "info")
+        self._load_loop()
+        self._update_running_badge()
 
 
 def _to_int(value, default, lo=30):

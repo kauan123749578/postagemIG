@@ -26,6 +26,13 @@ robocopy $dist $destino /E /NFL /NDL /NJH /NJS | Out-Null
 
 Copy-Item (Join-Path $origem "LEIA-ME-CLIENTE-EXE.txt") (Join-Path $destino "LEIA-ME.txt") -Force
 
+# ffmpeg ao lado do .exe (se existir na pasta do projeto)
+$ffmpeg = Join-Path $origem "ffmpeg.exe"
+if (Test-Path $ffmpeg) {
+    Copy-Item $ffmpeg (Join-Path $destino "ffmpeg.exe") -Force
+    Write-Host "ffmpeg.exe incluido na entrega"
+}
+
 # data vazia (opcional — o app cria sozinho na 1a execucao)
 New-Item -ItemType Directory -Path (Join-Path $destino "data") -Force | Out-Null
 

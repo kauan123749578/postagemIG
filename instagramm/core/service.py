@@ -432,11 +432,93 @@ def set_loop_running(account_id: int, running: bool) -> None:
             loop.last_error = ""
             loop.batch_remaining = 0
             loop.current_index = 0
+        else:
+            loop.next_run_at = None
         acc = db.get(Account, account_id)
         name = acc.name if acc else ""
         mode = loop.mode or "continuo"
     label = "Loop recorrente" if mode == "recorrente" else "Loop contínuo"
     notify.log_event(label + (" iniciado" if running else " parado"), "info", name)
+
+
+def count_running_loops() -> int:
+    with session_scope() as db:
+        return db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
+
+
+def stop_all_loops() -> int:
+    """Para todos os loops ativos. Retorna quantos foram parados."""
+    stopped = 0
+    with session_scope() as db:
+        loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).all()
+        for loop in loops:
+            loop.is_running = False
+            loop.next_run_at = None
+            stopped += 1
+    if stopped:
+        notify.log_event(f"{stopped} loop(s) parado(s)", "info")
+    return stopped
+
+
+# ---------------- Perfil ----------------
+
+def get_profile(account_id: int) -> dict:
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        if not acc:
+            return {"ok": False, "message": "Conta não encontrada"}
+        try:
+            result = ig.get_profile(acc)
+            acc.session_json = json.dumps(result["settings"])
+            _export_session_file(acc.username, result["settings"])
+            return {
+                "ok": True,
+                "username": result.get("username", ""),
+                "full_name": result.get("full_name", ""),
+                "biography": result.get("biography", ""),
+                "external_url": result.get("external_url", ""),
+                "profile_pic_url": result.get("profile_pic_url", ""),
+            }
+        except ig.InstagramError as exc:
+            return {"ok": False, "message": str(exc)}
+
+
+def update_profile(
+    account_id: int,
+    *,
+    biography: str | None = None,
+    external_url: str | None = None,
+    full_name: str | None = None,
+    picture_path: str | None = None,
+) -> dict:
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        if not acc:
+            return {"ok": False, "message": "Conta não encontrada"}
+        try:
+            result = ig.edit_profile(
+                acc,
+                biography=biography,
+                external_url=external_url,
+                full_name=full_name,
+                picture_path=picture_path,
+            )
+            acc.session_json = json.dumps(result["settings"])
+            _export_session_file(acc.username, result["settings"])
+            parts = []
+            if biography is not None:
+                parts.append("bio")
+            if external_url is not None:
+                parts.append("link")
+            if full_name is not None:
+                parts.append("nome")
+            if picture_path:
+                parts.append("foto")
+            notify.log_event("Perfil atualizado: " + ", ".join(parts), "success", acc.name)
+            return {"ok": True, "message": "Perfil atualizado com sucesso"}
+        except ig.InstagramError as exc:
+            notify.log_event(f"Falha ao editar perfil: {exc}", "error", acc.name)
+            return {"ok": False, "message": str(exc)}
 
 
 # ---------------- Agendamentos ----------------

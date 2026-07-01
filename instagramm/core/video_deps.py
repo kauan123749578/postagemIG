@@ -5,11 +5,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+from core.config import LOCAL_FFMPEG
+
 _BOOTSTRAPPED = False
 
 
 def resolve_ffmpeg_exe() -> str:
     """Localiza o ffmpeg empacotado ou do sistema."""
+    # 1) ffmpeg.exe ao lado do programa (prioridade — o que o usuário colocou na pasta)
+    if LOCAL_FFMPEG.is_file():
+        os.environ["IMAGEIO_FFMPEG_EXE"] = str(LOCAL_FFMPEG)
+        return str(LOCAL_FFMPEG)
+
     env = os.environ.get("IMAGEIO_FFMPEG_EXE", "").strip()
     if env and Path(env).is_file():
         return env

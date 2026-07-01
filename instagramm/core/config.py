@@ -23,6 +23,7 @@ VIDEOS_DIR = DATA_DIR / "uploads" / "videos"
 IMAGES_DIR = DATA_DIR / "uploads" / "images"
 DB_PATH = DATA_DIR / "app.db"
 KEY_PATH = DATA_DIR / "secret.key"
+LOCAL_FFMPEG = BASE_DIR / "ffmpeg.exe"
 
 for _p in (DATA_DIR, SESSIONS_DIR, VIDEOS_DIR, IMAGES_DIR):
     _p.mkdir(parents=True, exist_ok=True)

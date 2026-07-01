@@ -13,6 +13,7 @@ from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
 from ui.views.loop import LoopView
 from ui.views.media import MediaView
+from ui.views.profile import ProfileView
 from ui.views.publish import PublishView
 from ui.views.schedule import ScheduleView
 from ui.views.settings import SettingsView
@@ -23,6 +24,7 @@ NAV = [
     ("dashboard", "  📊  Dashboard"),
     ("accounts", "  👤  Contas"),
     ("publish", "  🚀  Publicar"),
+    ("profile", "  ✏️  Editar perfil"),
     ("loop", "  🔁  Loop (contínuo/recorrente)"),
     ("stagger", "  ⚡  Fila escalonada"),
     ("warm", "  🔥  Aquecer contas"),
@@ -36,6 +38,7 @@ VIEW_CLASSES = {
     "dashboard": DashboardView,
     "accounts": AccountsView,
     "publish": PublishView,
+    "profile": ProfileView,
     "loop": LoopView,
     "stagger": StaggerView,
     "warm": WarmView,

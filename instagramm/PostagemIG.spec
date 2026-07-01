@@ -20,6 +20,11 @@ ffmpeg_exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
 if ffmpeg_exe.is_file():
     binaries.append((str(ffmpeg_exe), "imageio_ffmpeg/binaries"))
 
+# ffmpeg.exe local na pasta do projeto (prioridade na execução)
+local_ffmpeg = Path(SPECPATH) / "ffmpeg.exe"
+if local_ffmpeg.is_file():
+    binaries.append((str(local_ffmpeg), "."))
+
 # Bibliotecas que precisam levar dados/binários e submódulos junto
 for pkg in ("customtkinter", "instagrapi", "moviepy", "imageio_ffmpeg"):
     d, b, h = collect_all(pkg)
