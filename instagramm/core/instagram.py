@@ -280,6 +280,15 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     if not video.exists():
         raise InstagramError(f"Vídeo não encontrado: {video_path}")
     thumb = Path(cover_path) if cover_path and Path(cover_path).exists() else None
+    temp_thumb: Path | None = None
+    if not thumb:
+        from core.video_deps import make_video_thumbnail
+
+        try:
+            temp_thumb = make_video_thumbnail(video)
+            thumb = temp_thumb
+        except Exception as exc:  # noqa: BLE001
+            raise InstagramError(f"Falha ao gerar capa do vídeo: {exc}") from exc
 
     if not account.session_json:
         raise InstagramError("Conta sem sessão. Conecte a conta antes de postar.")
@@ -288,10 +297,7 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     cl = _client_from_account(account, settings)
 
     def _do():
-        kwargs = {}
-        if thumb:
-            kwargs["thumbnail"] = thumb
-        return cl.clip_upload(video, caption or "", **kwargs)
+        return cl.clip_upload(video, caption or "", thumbnail=thumb)
 
     try:
         media = _do()
@@ -311,6 +317,12 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         name = exc.__class__.__name__
         kind = "rate_limit" if name in ("PleaseWaitFewMinutes", "ClientThrottledError") else "error"
         raise InstagramError(_friendly(exc), kind=kind) from exc
+    finally:
+        if temp_thumb and temp_thumb.is_file():
+            try:
+                temp_thumb.unlink()
+            except OSError:
+                pass
 
     return {
         "media_pk": str(media.pk),

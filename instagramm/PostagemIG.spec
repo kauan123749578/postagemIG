@@ -5,11 +5,20 @@ Empacota toda a UI (customtkinter) e a engine (instagrapi + dependências)
 num app de pasta única (onedir). A pasta `data/` é criada ao lado do .exe
 na primeira execução (ver core/config.py).
 """
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+import imageio_ffmpeg
 
 datas = []
 binaries = []
 hiddenimports = []
+
+# ffmpeg embutido (crítico para gerar capa de vídeo no .exe)
+ffmpeg_exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
+if ffmpeg_exe.is_file():
+    binaries.append((str(ffmpeg_exe), "imageio_ffmpeg/binaries"))
 
 # Bibliotecas que precisam levar dados/binários e submódulos junto
 for pkg in ("customtkinter", "instagrapi", "moviepy", "imageio_ffmpeg"):
@@ -19,6 +28,7 @@ for pkg in ("customtkinter", "instagrapi", "moviepy", "imageio_ffmpeg"):
     hiddenimports += h
 
 hiddenimports += collect_submodules("PIL")
+hiddenimports += ["instagrapi.utils.video", "core.video_deps"]
 
 a = Analysis(
     ["main.py"],
