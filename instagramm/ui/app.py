@@ -4,7 +4,7 @@ import traceback
 
 import customtkinter as ctk
 
-from core import service
+from core import challenge_flow, service
 from core.config import APP_NAME, APP_VERSION
 from core.workers import WorkerManager
 from ui import theme
@@ -60,6 +60,9 @@ class App(ctk.CTk):
 
         service.setup()
 
+        challenge_flow.set_ui_hook(self._on_challenge_needed)
+        self._challenge_dialogs: dict[int, object] = {}
+
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
         self._views: dict[str, ctk.CTkFrame] = {}
         self._current: str | None = None
@@ -81,6 +84,26 @@ class App(ctk.CTk):
 
     def alert_session_expired(self, account_name: str):
         self.toast(f"⚠️ Sessão de {account_name} expirou — reconecte em Contas", "error")
+
+    def _on_challenge_needed(self, account_id: int, username: str, channel: str):
+        """Chamado quando o Instagram pede código extra durante o login (thread de fundo)."""
+        self.after(0, lambda: self._show_challenge_dialog(account_id, username, channel))
+
+    def _show_challenge_dialog(self, account_id: int, username: str, channel: str):
+        if account_id in self._challenge_dialogs:
+            return
+        from ui.dialogs import ChallengeDialog
+
+        def on_code(code):
+            challenge_flow.submit_code(account_id, code)
+
+        def on_cancel():
+            challenge_flow.cancel_wait(account_id)
+            self._challenge_dialogs.pop(account_id, None)
+
+        dlg = ChallengeDialog(self, username, channel, on_code, on_cancel=on_cancel)
+        self._challenge_dialogs[account_id] = dlg
+        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
 
     def _check_sessions_on_start(self):
         def done(expired):

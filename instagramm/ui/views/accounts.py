@@ -251,12 +251,15 @@ class AccountsView(BaseView):
         self.connect_btn.configure(state="normal", text=("💾  Salvar e reconectar" if self.edit_id else "🔗  Conectar conta"))
         status = res.get("status")
         if status == "connected":
+            self.app._challenge_dialogs.pop(acc_id, None)
             self.app.toast("Conta conectada com sucesso", "success")
             self._reset_form()
         elif status == "needs_2fa":
             self._open_2fa(acc_id, username)
         else:
             msg = res.get("message", "Falha ao conectar")
+            if res.get("status") == "needs_challenge":
+                msg = msg or "Verificação extra necessária — aguarde o popup de código."
             if proxy_saved and self.edit_id:
                 self.app.toast(f"Dados salvos, mas: {msg}", "error")
             else:
@@ -277,14 +280,20 @@ class AccountsView(BaseView):
             return service.connect_account(acc_id, verification_code=code)
 
         def done(res):
+            self.app._challenge_dialogs.pop(acc_id, None)
             if res.get("status") == "connected":
                 self.app.toast("Conta conectada com sucesso", "success")
                 dlg.destroy()
                 self._reset_form()
             elif res.get("status") == "needs_2fa":
                 dlg.set_error("Código incorreto, tente novamente.")
+            elif res.get("status") == "needs_challenge":
+                dlg.set_error("Verificação extra necessária — confira o outro popup.")
             else:
-                dlg.set_error(res.get("message", "Falha ao conectar"))
+                msg = res.get("message", "Falha ao conectar")
+                if msg in ("challenge", "'challenge'", "challenge_required"):
+                    msg = "Verificação extra do Instagram. Tente conectar de novo."
+                dlg.set_error(msg)
             self._reload()
 
         self.app.run_async(task, on_done=done, on_error=lambda e: dlg.set_error(str(e)))

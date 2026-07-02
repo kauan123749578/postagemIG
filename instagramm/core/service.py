@@ -232,7 +232,7 @@ def connect_account(
 
         try:
             if effective_sid and not pwd and not verification_code:
-                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url)
+                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url, account_id=account_id)
             elif acc.username and pwd:
                 result = ig.login(
                     username=acc.username,
@@ -241,9 +241,10 @@ def connect_account(
                     verification_code=verification_code,
                     proxy_url=acc.proxy_url,
                     settings=settings if not (sid_input) else None,
+                    account_id=account_id,
                 )
             elif effective_sid:
-                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url)
+                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url, account_id=account_id)
             else:
                 return {"status": "error", "message": "Informe senha ou sessionid para conectar."}
         except ig.InstagramError as exc:
@@ -253,6 +254,12 @@ def connect_account(
                 acc.status = "pending"
                 acc.status_message = "Aguardando código 2FA"
                 return {"status": "needs_2fa", "message": str(exc)}
+            if exc.kind == "challenge":
+                if exc.settings:
+                    _pending_2fa[account_id] = exc.settings
+                acc.status = "pending"
+                acc.status_message = str(exc)
+                return {"status": "needs_challenge", "message": str(exc)}
             if getattr(exc, "kind", "") == "login_required" or _is_session_expired_message(str(exc)):
                 _mark_session_expired(db, acc, str(exc))
             else:

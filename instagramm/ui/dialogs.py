@@ -1,28 +1,24 @@
-"""Diálogos modais (2FA, confirmação)."""
+"""Diálogos modais (2FA, challenge, confirmação)."""
 import customtkinter as ctk
 
 from ui import theme, widgets
 
 
-class TwoFactorDialog(ctk.CTkToplevel):
-    """Popup para digitar o código de verificação em duas etapas."""
+class _CodeDialog(ctk.CTkToplevel):
+    """Base para diálogos de código de verificação."""
 
-    def __init__(self, parent, account_name: str, on_submit):
+    def __init__(self, parent, title: str, heading: str, subtitle: str, on_submit):
         super().__init__(parent)
         self.on_submit = on_submit
-        self.title("Verificação 2FA")
+        self.title(title)
         self.configure(fg_color=theme.CARD)
-        self.geometry("400x300")
+        self.geometry("420x320")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
 
-        widgets.title(self, "🔐 Verificação em duas etapas", size=17).pack(pady=(26, 6), padx=24)
-        widgets.subtitle(
-            self,
-            f"Digite o código de 6 dígitos da conta @{account_name}\n(app autenticador ou SMS).",
-            justify="center",
-        ).pack(padx=24)
+        widgets.title(self, heading, size=17).pack(pady=(26, 6), padx=24)
+        widgets.subtitle(self, subtitle, justify="center").pack(padx=24)
 
         self.code_entry = ctk.CTkEntry(
             self,
@@ -37,16 +33,19 @@ class TwoFactorDialog(ctk.CTkToplevel):
         self.code_entry.pack(fill="x", padx=36, pady=22)
         self.code_entry.bind("<Return>", lambda _e: self._submit())
 
-        self.error_label = ctk.CTkLabel(self, text="", text_color=theme.DANGER, font=(theme.FONT, 11), wraplength=340)
+        self.error_label = ctk.CTkLabel(self, text="", text_color=theme.DANGER, font=(theme.FONT, 11), wraplength=360)
         self.error_label.pack(padx=24)
 
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.pack(fill="x", padx=24, pady=(10, 20), side="bottom")
-        widgets.ghost_button(btns, "Cancelar", self.destroy).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        widgets.ghost_button(btns, "Cancelar", self._cancel).pack(side="left", expand=True, fill="x", padx=(0, 6))
         self.submit_btn = widgets.primary_button(btns, "Confirmar", self._submit)
         self.submit_btn.pack(side="left", expand=True, fill="x", padx=(6, 0))
 
         self.after(120, self.code_entry.focus)
+
+    def _cancel(self):
+        self.destroy()
 
     def _submit(self):
         code = self.code_entry.get().strip()
@@ -60,6 +59,41 @@ class TwoFactorDialog(ctk.CTkToplevel):
     def set_error(self, msg: str):
         self.error_label.configure(text=msg)
         self.submit_btn.configure(state="normal", text="Confirmar")
+
+
+class TwoFactorDialog(_CodeDialog):
+    """Popup para digitar o código de verificação em duas etapas."""
+
+    def __init__(self, parent, account_name: str, on_submit):
+        super().__init__(
+            parent,
+            title="Verificação 2FA",
+            heading="🔐 Verificação em duas etapas",
+            subtitle=f"Digite o código de 6 dígitos da conta @{account_name}\n(app autenticador ou SMS).",
+            on_submit=on_submit,
+        )
+
+
+class ChallengeDialog(_CodeDialog):
+    """Popup para código de verificação extra (e-mail/SMS) do Instagram."""
+
+    def __init__(self, parent, account_name: str, channel: str, on_submit, on_cancel=None):
+        self._on_cancel = on_cancel
+        super().__init__(
+            parent,
+            title="Verificação Instagram",
+            heading="📧 Verificação extra",
+            subtitle=(
+                f"O Instagram enviou um código por {channel} para @{account_name}.\n"
+                "Digite o código abaixo."
+            ),
+            on_submit=on_submit,
+        )
+
+    def _cancel(self):
+        if self._on_cancel:
+            self._on_cancel()
+        self.destroy()
 
 
 def confirm(parent, message: str, title_text: str = "Confirmar") -> bool:
