@@ -67,7 +67,10 @@ def _export_session_file(username: str, settings: dict) -> None:
 
 def _is_session_expired_message(message: str) -> bool:
     low = (message or "").lower()
-    return any(x in low for x in ("sessão expirada", "loginrequired", "login required", "refaça o login"))
+    return any(x in low for x in (
+        "sessão expirada", "loginrequired", "login required", "login_required",
+        "refaça o login", "reconecte em contas",
+    ))
 
 
 def _persist_sessionid_from_settings(acc: Account, settings: dict) -> None:
@@ -401,6 +404,9 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
         try:
             result = ig.post_reel(acc, video_path, final_caption, cover_path)
             acc.session_json = json.dumps(result["settings"])
+            acc.status = "healthy"
+            acc.status_message = "Conectada"
+            _persist_sessionid_from_settings(acc, result["settings"])
             _export_session_file(acc.username, result["settings"])
             db.add(PostLog(
                 account_id=acc.id,
@@ -423,7 +429,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
                 error_message=str(exc),
             ))
             acc.status = "error" if exc.kind != "rate_limit" else acc.status
-            if _is_session_expired_message(str(exc)):
+            if getattr(exc, "kind", "") == "login_required" or _is_session_expired_message(str(exc)):
                 _mark_session_expired(db, acc, str(exc))
             else:
                 acc.status_message = str(exc)

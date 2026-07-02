@@ -22,6 +22,13 @@ def _friendly(exc: Exception) -> str:
         return "Conta sem e-mail ou telefone confirmado no Instagram. Confirme no app oficial antes de editar."
     if "chat not found" in low:
         pass
+    if "exceeded" in low and "redirect" in low:
+        return (
+            "Sessão ou proxy inválido (muitos redirecionamentos). "
+            "Reconecte em Contas com sessionid novo ou revise o proxy (tente socks5://)."
+        )
+    if "login_required" in low:
+        return "Sessão expirada. Reconecte em Contas (cole um sessionid novo do navegador)."
     hints = {
         "BadPassword": "Usuário ou senha inválidos.",
         "TwoFactorRequired": "Conta com verificação em duas etapas (2FA).",
@@ -158,38 +165,76 @@ def _saved_sessionid(account) -> str | None:
     return None
 
 
-def _relogin(account, cl) -> None:
-    """Tenta relogar com senha ou sessionid salvo."""
+def _needs_relogin(exc: Exception) -> bool:
+    """Detecta erro de sessão (inclui ClipNotUpload com login_required)."""
+    from instagrapi.exceptions import ClientLoginRequired, LoginRequired
+    from requests.exceptions import TooManyRedirects
+
+    if isinstance(exc, (LoginRequired, ClientLoginRequired, TooManyRedirects)):
+        return True
+    low = str(exc).lower()
+    if "login_required" in low or "login required" in low or "logged out" in low:
+        return True
+    err = getattr(exc, "error_response", None)
+    if isinstance(err, dict) and str(err.get("message", "")).lower() == "login_required":
+        return True
+    return False
+
+
+def _relogin_fresh(account) -> dict:
+    """Faz login do zero e devolve settings atualizados."""
     from core.crypto import decrypt_secret
 
     pwd = decrypt_secret(account.password_enc) or None
     sid = _saved_sessionid(account)
-    if account.username and pwd:
-        cl.login(account.username, pwd)
-        return
-    if sid:
-        cl.login_by_sessionid(sid)
-        return
-    raise InstagramError(
-        "Sessão expirada. Reconecte em Contas (senha ou sessionid).",
-        kind="login_required",
-    )
+    cl = build_client(account.proxy_url, None)
+    try:
+        if account.username and pwd:
+            cl.login(account.username, pwd)
+        elif sid:
+            cl.login_by_sessionid(sid)
+        else:
+            raise InstagramError(
+                "Sessão expirada. Reconecte em Contas (senha ou sessionid).",
+                kind="login_required",
+            )
+    except InstagramError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        kind = "login_required" if _needs_relogin(exc) else "error"
+        raise InstagramError(_friendly(exc), kind=kind) from exc
+    return cl.get_settings()
+
+
+def _relogin(account, cl) -> None:
+    """Compat: atualiza o client existente após relogar."""
+    settings = _relogin_fresh(account)
+    try:
+        cl.set_settings(settings)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _run_authed(account, callback):
-    """Executa ação autenticada com relogin automático (igual ao post de reels)."""
-    from instagrapi.exceptions import LoginRequired
-
+    """Executa ação autenticada com relogin automático."""
     if not account.session_json:
         raise InstagramError("Conta sem sessão. Conecte a conta.")
     settings = json.loads(account.session_json)
     cl = _client_from_account(account, settings)
     try:
         result = callback(cl)
-    except LoginRequired:
-        _relogin(account, cl)
-        result = callback(cl)
-    return result, cl.get_settings()
+        return result, cl.get_settings()
+    except Exception as exc:
+        if not _needs_relogin(exc):
+            raise
+        settings = _relogin_fresh(account)
+        cl = _client_from_account(account, settings)
+        try:
+            result = callback(cl)
+        except Exception as exc2:  # noqa: BLE001
+            kind = "login_required" if _needs_relogin(exc2) else "error"
+            raise InstagramError(_friendly(exc2), kind=kind) from exc2
+        return result, cl.get_settings()
 
 
 def verify_session(account) -> dict[str, Any]:
@@ -360,8 +405,6 @@ def warm_session(
 
 def post_reel(account, video_path: str, caption: str = "", cover_path: str | None = None) -> dict[str, Any]:
     """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings}."""
-    from instagrapi.exceptions import LoginRequired
-
     video = Path(video_path)
     if not video.exists():
         raise InstagramError(f"Vídeo não encontrado: {video_path}")
@@ -376,26 +419,18 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         except Exception as exc:  # noqa: BLE001
             raise InstagramError(f"Falha ao gerar capa do vídeo: {exc}") from exc
 
-    if not account.session_json:
-        raise InstagramError("Conta sem sessão. Conecte a conta antes de postar.")
-
-    settings = json.loads(account.session_json)
-    cl = _client_from_account(account, settings)
-
-    def _do():
-        return cl.clip_upload(video, caption or "", thumbnail=thumb)
-
     try:
-        media = _do()
-    except LoginRequired:
-        _relogin(account, cl)
-        try:
-            media = _do()
-        except Exception as exc:  # noqa: BLE001
-            raise InstagramError(_friendly(exc)) from exc
+        def work(cl):
+            return cl.clip_upload(video, caption or "", thumbnail=thumb)
+
+        media, settings = _run_authed(account, work)
+    except InstagramError:
+        raise
     except Exception as exc:  # noqa: BLE001
         name = exc.__class__.__name__
         kind = "rate_limit" if name in ("PleaseWaitFewMinutes", "ClientThrottledError") else "error"
+        if _needs_relogin(exc):
+            kind = "login_required"
         raise InstagramError(_friendly(exc), kind=kind) from exc
     finally:
         if temp_thumb and temp_thumb.is_file():
@@ -407,7 +442,7 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     return {
         "media_pk": str(media.pk),
         "code": getattr(media, "code", ""),
-        "settings": cl.get_settings(),
+        "settings": settings,
     }
 
 
@@ -478,6 +513,7 @@ def edit_profile(
     except InstagramError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise InstagramError(_friendly(exc)) from exc
+        kind = "login_required" if _needs_relogin(exc) else "error"
+        raise InstagramError(_friendly(exc), kind=kind) from exc
 
     return {"settings": settings, "changed": changed}
