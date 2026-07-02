@@ -28,7 +28,7 @@ class ProfileView(BaseView):
         titles = ctk.CTkFrame(header, fg_color="transparent")
         titles.grid(row=0, column=0, sticky="w")
         widgets.title(titles, "Editar perfil", size=24).pack(anchor="w")
-        widgets.subtitle(titles, "Bio, link na bio e foto de perfil").pack(anchor="w")
+        widgets.subtitle(titles, "Bio, link na bio e foto de perfil — clique em Carregar perfil antes de salvar").pack(anchor="w")
 
         self.save_top_btn = widgets.primary_button(header, "💾  Salvar no Instagram", self._save, height=44, width=200)
         self.save_top_btn.grid(row=0, column=1, sticky="e", padx=(12, 0))

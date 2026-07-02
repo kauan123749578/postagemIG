@@ -216,6 +216,7 @@ def connect_account(
         sid_input = (sessionid or "").strip()
         if sid_input:
             acc.sessionid_enc = encrypt_secret(sid_input)
+            acc.session_json = ""
             db.flush()
 
         saved_sid = decrypt_secret(acc.sessionid_enc) or None if acc.sessionid_enc else None
@@ -232,7 +233,10 @@ def connect_account(
 
         try:
             if effective_sid and not pwd and not verification_code:
-                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url, account_id=account_id)
+                result = ig.login(
+                    sessionid=effective_sid, proxy_url=acc.proxy_url,
+                    account_id=account_id, settings=None,
+                )
             elif acc.username and pwd:
                 result = ig.login(
                     username=acc.username,
@@ -244,7 +248,10 @@ def connect_account(
                     account_id=account_id,
                 )
             elif effective_sid:
-                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url, account_id=account_id)
+                result = ig.login(
+                    sessionid=effective_sid, proxy_url=acc.proxy_url,
+                    account_id=account_id, settings=None,
+                )
             else:
                 return {"status": "error", "message": "Informe senha ou sessionid para conectar."}
         except ig.InstagramError as exc:

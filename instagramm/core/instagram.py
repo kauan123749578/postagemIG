@@ -145,8 +145,21 @@ def login(
     }
 
 
-def _client_from_account(account, settings: dict):
-    cl = build_client(account.proxy_url, settings)
+def _client_from_account(account, settings: dict, *, use_proxy: bool = True):
+    proxy = account.proxy_url if use_proxy else None
+    cl = build_client(proxy, settings)
+    if not cl.user_id:
+        sid = _saved_sessionid(account)
+        if sid:
+            try:
+                cl.login_by_sessionid(sid)
+            except Exception:  # noqa: BLE001
+                pass
+    if hasattr(cl, "inject_sessionid_to_public"):
+        try:
+            cl.inject_sessionid_to_public()
+        except Exception:  # noqa: BLE001
+            pass
     return cl
 
 
@@ -185,19 +198,32 @@ def _saved_sessionid(account) -> str | None:
 
 
 def _needs_relogin(exc: Exception) -> bool:
-    """Detecta erro de sessão (inclui ClipNotUpload com login_required)."""
+    """Detecta erro real de sessão (não confundir com proxy/redirect)."""
     from instagrapi.exceptions import ClientLoginRequired, LoginRequired
-    from requests.exceptions import TooManyRedirects
 
-    if isinstance(exc, (LoginRequired, ClientLoginRequired, TooManyRedirects)):
+    if isinstance(exc, (LoginRequired, ClientLoginRequired)):
         return True
     low = str(exc).lower()
-    if "login_required" in low or "login required" in low or "logged out" in low:
+    if "login_required" in low or "logged out" in low:
         return True
     err = getattr(exc, "error_response", None)
     if isinstance(err, dict) and str(err.get("message", "")).lower() == "login_required":
         return True
     return False
+
+
+def _raise_api_error(exc: Exception) -> None:
+    """Converte exceção da API em InstagramError com mensagem útil."""
+    from requests.exceptions import TooManyRedirects
+
+    if isinstance(exc, TooManyRedirects):
+        raise InstagramError(_friendly(exc), kind="error") from exc
+    if _needs_relogin(exc):
+        raise InstagramError(
+            "Sessão inválida para editar perfil. Em Contas, cole um sessionid novo e reconecte.",
+            kind="login_required",
+        ) from exc
+    raise InstagramError(_friendly(exc), kind="error") from exc
 
 
 def _relogin_fresh(account) -> dict:
@@ -234,52 +260,20 @@ def _relogin(account, cl) -> None:
         pass
 
 
-def _run_authed(account, callback, *, preserve_session: bool = False):
-    """Executa ação com a sessão salva — sem relogin automático (evita derrubar sessão do navegador)."""
+def _run_authed(account, callback, *, preserve_session: bool = False, use_proxy: bool = True):
+    """Executa ação com a sessão salva — sem relogin automático."""
     if not account.session_json:
         raise InstagramError("Conta sem sessão. Conecte a conta.")
     original_settings = json.loads(account.session_json)
-    cl = _client_from_account(account, original_settings)
+    cl = _client_from_account(account, original_settings, use_proxy=use_proxy)
     try:
         result = callback(cl)
         settings = original_settings if preserve_session else cl.get_settings()
         return result, settings
-    except Exception as exc:
-        if _needs_relogin(exc):
-            raise InstagramError(
-                "Sessão expirada. Vá em Contas e reconecte (sessionid novo ou senha). "
-                "O app não faz login automático para não deslogar seu navegador.",
-                kind="login_required",
-            ) from exc
+    except InstagramError:
         raise
-
-
-def _profile_edit_payload(info, *, biography: str | None = None, full_name: str | None = None, external_url: str | None = None) -> dict:
-    """Monta payload do accounts/edit_profile/ sem chamar set_biography (evita invalidar sessão do navegador)."""
-    email = getattr(info, "public_email", None) or getattr(info, "email", None) or ""
-    phone = getattr(info, "phone_number", None) or ""
-    data: dict[str, str] = {}
-    if email:
-        data["email"] = str(email)
-    elif phone:
-        data["phone_number"] = str(phone)
-    else:
-        raise InstagramError(
-            "Conta sem e-mail ou telefone confirmado no Instagram. Confirme no app oficial antes de editar.",
-        )
-    current_name = (getattr(info, "full_name", None) or "").strip()
-    current_url = (getattr(info, "external_url", None) or "").strip()
-    if full_name is not None and full_name.strip():
-        data["first_name"] = full_name.strip()
-    elif current_name:
-        data["first_name"] = current_name
-    if external_url is not None and external_url.strip():
-        data["external_url"] = external_url.strip()
-    elif current_url:
-        data["external_url"] = current_url
-    if biography is not None:
-        data["biography"] = biography.strip()
-    return data
+    except Exception as exc:
+        _raise_api_error(exc)
 
 
 def verify_session(account) -> dict[str, Any]:
@@ -491,11 +485,35 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     }
 
 
+def _run_profile_authed(account, callback):
+    """Executa leitura/edição de perfil; se proxy falhar, tenta de novo sem proxy."""
+    last_exc: InstagramError | None = None
+    attempts = (True, False) if account.proxy_url else (True,)
+    for use_proxy in attempts:
+        try:
+            return _run_authed(account, callback, preserve_session=True, use_proxy=use_proxy)
+        except InstagramError as exc:
+            last_exc = exc
+            if use_proxy and account.proxy_url and (
+                exc.kind == "login_required" or "redirect" in str(exc).lower()
+            ):
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise InstagramError("Falha ao acessar perfil")
+
+
 def get_profile(account) -> dict[str, Any]:
     """Lê bio, link e nome do perfil conectado."""
 
     def work(cl):
         info = cl.account_info()
+        if not cl.user_id:
+            raise InstagramError(
+                "Sessão incompleta. Reconecte em Contas com sessionid novo.",
+                kind="login_required",
+            )
         return {
             "username": info.username,
             "full_name": getattr(info, "full_name", "") or "",
@@ -504,7 +522,7 @@ def get_profile(account) -> dict[str, Any]:
             "profile_pic_url": str(getattr(info, "profile_pic_url", "") or ""),
         }
 
-    data, settings = _run_authed(account, work, preserve_session=True)
+    data, settings = _run_profile_authed(account, work)
     return {**data, "settings": settings}
 
 
@@ -520,29 +538,33 @@ def edit_profile(
 
     def work(cl):
         changed: list[str] = []
-        info = cl.account_info()
-
-        has_text_edit = any([
-            biography is not None,
-            external_url is not None and external_url.strip(),
-            full_name is not None and full_name.strip(),
-        ])
-        if has_text_edit:
-            payload = _profile_edit_payload(
-                info,
-                biography=biography,
-                full_name=full_name,
-                external_url=external_url,
+        cl.account_info()
+        if not cl.user_id:
+            raise InstagramError(
+                "Sessão incompleta para editar perfil. Em Contas, cole um sessionid novo e clique em Salvar e reconectar.",
+                kind="login_required",
             )
-            result = cl.private_request("accounts/edit_profile/", cl.with_default_data(payload))
-            if result.get("status") != "ok" and "user" not in result:
-                raise InstagramError(f"Falha ao editar perfil: {result}")
+
+        only_bio = (
+            biography is not None
+            and not (full_name is not None and str(full_name).strip())
+            and not (external_url is not None and str(external_url).strip())
+        )
+
+        if only_bio:
+            cl.account_set_biography(biography.strip())
+            changed.append("biography")
+        else:
+            edit_kwargs: dict[str, str] = {}
             if biography is not None:
-                changed.append("biography")
+                edit_kwargs["biography"] = biography.strip()
             if full_name is not None and full_name.strip():
-                changed.append("full_name")
+                edit_kwargs["full_name"] = full_name.strip()
             if external_url is not None and external_url.strip():
-                changed.append("external_url")
+                edit_kwargs["external_url"] = external_url.strip()
+            if edit_kwargs:
+                cl.account_edit(**edit_kwargs)
+                changed.extend(edit_kwargs.keys())
 
         if picture_path:
             pic = Path(picture_path)
@@ -553,11 +575,11 @@ def edit_profile(
         return changed
 
     try:
-        changed, settings = _run_authed(account, work, preserve_session=True)
+        changed, settings = _run_profile_authed(account, work)
+        return {"settings": settings, "changed": changed}
     except InstagramError:
         raise
     except Exception as exc:  # noqa: BLE001
-        kind = "login_required" if _needs_relogin(exc) else "error"
-        raise InstagramError(_friendly(exc), kind=kind) from exc
+        _raise_api_error(exc)
 
-    return {"settings": settings, "changed": changed}
+    return {"settings": {}, "changed": []}
