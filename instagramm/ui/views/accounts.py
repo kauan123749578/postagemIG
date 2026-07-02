@@ -256,10 +256,10 @@ class AccountsView(BaseView):
             self._reset_form()
         elif status == "needs_2fa":
             self._open_2fa(acc_id, username)
+        elif status == "needs_challenge":
+            self._open_challenge(acc_id, username)
         else:
             msg = res.get("message", "Falha ao conectar")
-            if res.get("status") == "needs_challenge":
-                msg = msg or "Verificação extra necessária — aguarde o popup de código."
             if proxy_saved and self.edit_id:
                 self.app.toast(f"Dados salvos, mas: {msg}", "error")
             else:
@@ -288,7 +288,8 @@ class AccountsView(BaseView):
             elif res.get("status") == "needs_2fa":
                 dlg.set_error("Código incorreto, tente novamente.")
             elif res.get("status") == "needs_challenge":
-                dlg.set_error("Verificação extra necessária — confira o outro popup.")
+                dlg.destroy()
+                self._open_challenge(acc_id, username)
             else:
                 msg = res.get("message", "Falha ao conectar")
                 if msg in ("challenge", "'challenge'", "challenge_required"):
@@ -297,6 +298,40 @@ class AccountsView(BaseView):
             self._reload()
 
         self.app.run_async(task, on_done=done, on_error=lambda e: dlg.set_error(str(e)))
+
+    def _open_challenge(self, acc_id, username):
+        from ui.dialogs import ChallengeDialog
+
+        def on_submit(code):
+            self.app.toast("Verificando código...", "info")
+
+            def task():
+                return service.retry_after_challenge(acc_id, code)
+
+            def done(res):
+                self.app._challenge_dialogs.pop(acc_id, None)
+                if res.get("status") == "connected":
+                    self.app.toast("Conta conectada com sucesso", "success")
+                    self._reset_form()
+                elif res.get("status") == "needs_2fa":
+                    self._open_2fa(acc_id, username)
+                elif res.get("status") == "needs_challenge":
+                    self.app.toast("Código incorreto ou expirado. Tente de novo.", "error")
+                    self._open_challenge(acc_id, username)
+                else:
+                    self.app.toast(res.get("message", "Falha na verificação"), "error")
+                self._reload()
+
+            self.app.run_async(task, on_done=done)
+
+        dlg = ChallengeDialog(
+            self.app, username or "", "e-mail ou SMS",
+            on_submit,
+            on_cancel=lambda: self.app._challenge_dialogs.pop(acc_id, None),
+        )
+        self.app._challenge_dialogs[acc_id] = dlg
+        dlg.lift()
+        dlg.focus_force()
 
     def _edit(self, acc):
         self.edit_id = acc["id"]

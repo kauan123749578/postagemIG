@@ -35,6 +35,7 @@ from core.db import (
 
 # device/uuids guardados entre a 1ª tentativa e o envio do código 2FA
 _pending_2fa: dict[int, dict] = {}
+_pending_verify: dict[int, str] = {}
 
 
 @contextmanager
@@ -180,6 +181,7 @@ def update_account(account_id: int, **fields) -> None:
 
 def delete_account(account_id: int) -> None:
     _pending_2fa.pop(account_id, None)
+    _pending_verify.pop(account_id, None)
     with session_scope() as db:
         acc = db.get(Account, account_id)
         if acc:
@@ -194,6 +196,25 @@ def save_account_settings(account_id: int, **fields) -> dict:
         fields.pop("sessionid")
     update_account(account_id, **fields)
     return {"ok": True, "message": "Dados da conta salvos (proxy, sessionid, limites, etc.)"}
+
+
+def retry_after_challenge(account_id: int, challenge_code: str) -> dict:
+    """Reenvia login após o usuário digitar o código do challenge (e-mail/SMS)."""
+    from core import challenge_flow
+
+    challenge_flow.preset_code(account_id, challenge_code)
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        if not acc:
+            return {"status": "error", "message": "Conta não encontrada"}
+        pwd = decrypt_secret(acc.password_enc) or None
+        sid = decrypt_secret(acc.sessionid_enc) if acc.sessionid_enc else None
+    verify = _pending_verify.get(account_id)
+    if pwd:
+        return connect_account(account_id, password=pwd, verification_code=verify)
+    if sid:
+        return connect_account(account_id, sessionid=sid)
+    return {"status": "error", "message": "Informe senha ou sessionid para reconectar."}
 
 
 def connect_account(
@@ -225,17 +246,20 @@ def connect_account(
 
         # reaproveita device da 1ª tentativa quando enviando o código 2FA
         settings = _pending_2fa.get(account_id)
-        if not settings and acc.session_json:
+        if not settings and acc.session_json and not sid_input:
             try:
                 settings = json.loads(acc.session_json)
             except json.JSONDecodeError:
                 settings = None
 
+        if verification_code:
+            _pending_verify[account_id] = verification_code.strip()
+
         try:
             if effective_sid and not pwd and not verification_code:
                 result = ig.login(
                     sessionid=effective_sid, proxy_url=acc.proxy_url,
-                    account_id=account_id, settings=None,
+                    account_id=account_id, settings=settings,
                 )
             elif acc.username and pwd:
                 result = ig.login(
@@ -250,7 +274,7 @@ def connect_account(
             elif effective_sid:
                 result = ig.login(
                     sessionid=effective_sid, proxy_url=acc.proxy_url,
-                    account_id=account_id, settings=None,
+                    account_id=account_id, settings=settings,
                 )
             else:
                 return {"status": "error", "message": "Informe senha ou sessionid para conectar."}
@@ -275,6 +299,7 @@ def connect_account(
             return {"status": "error", "message": str(exc)}
 
         _pending_2fa.pop(account_id, None)
+        _pending_verify.pop(account_id, None)
         acc.session_json = json.dumps(result["settings"])
         _persist_sessionid_from_settings(acc, result["settings"])
         acc.username = result.get("username") or acc.username

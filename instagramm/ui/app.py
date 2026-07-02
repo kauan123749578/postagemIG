@@ -104,6 +104,10 @@ class App(ctk.CTk):
         dlg = ChallengeDialog(self, username, channel, on_code, on_cancel=on_cancel)
         self._challenge_dialogs[account_id] = dlg
         dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+        dlg.lift()
+        dlg.attributes("-topmost", True)
+        dlg.after(200, lambda: dlg.attributes("-topmost", False))
+        dlg.focus_force()
 
     def _check_sessions_on_start(self):
         def done(expired):

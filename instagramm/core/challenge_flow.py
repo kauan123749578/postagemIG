@@ -6,6 +6,7 @@ from typing import Callable
 
 _lock = threading.Lock()
 _waiting: dict[int, dict] = {}
+_preset_codes: dict[int, str] = {}
 _ui_hook: Callable[[int, str, str], None] | None = None
 
 
@@ -24,8 +25,18 @@ def _choice_label(choice) -> str:
     return "verificação"
 
 
+def preset_code(account_id: int, code: str) -> None:
+    with _lock:
+        _preset_codes[account_id] = code.strip()
+
+
 def wait_for_code(account_id: int, username: str, choice) -> str:
     """Bloqueia até o usuário digitar o código na UI (chamado pela instagrapi)."""
+    with _lock:
+        preset = _preset_codes.pop(account_id, "")
+    if preset:
+        return preset
+
     label = _choice_label(choice)
     event = threading.Event()
     with _lock:

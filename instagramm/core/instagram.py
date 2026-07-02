@@ -149,7 +149,7 @@ def _client_from_account(account, settings: dict, *, use_proxy: bool = True):
     proxy = account.proxy_url if use_proxy else None
     cl = build_client(proxy, settings)
     if not cl.user_id:
-        sid = _saved_sessionid(account)
+        sid = _extract_sessionid(settings) or _saved_sessionid(account)
         if sid:
             try:
                 cl.login_by_sessionid(sid)
@@ -218,12 +218,14 @@ def _raise_api_error(exc: Exception) -> None:
 
     if isinstance(exc, TooManyRedirects):
         raise InstagramError(_friendly(exc), kind="error") from exc
+    detail = _friendly(exc)
     if _needs_relogin(exc):
         raise InstagramError(
-            "Sessão inválida para editar perfil. Em Contas, cole um sessionid novo e reconecte.",
+            f"Não foi possível editar o perfil: {detail}. "
+            "Tente reconectar em Contas (senha costuma funcionar melhor que sessionid para editar bio).",
             kind="login_required",
         ) from exc
-    raise InstagramError(_friendly(exc), kind="error") from exc
+    raise InstagramError(detail, kind="error") from exc
 
 
 def _relogin_fresh(account) -> dict:
@@ -541,30 +543,21 @@ def edit_profile(
         cl.account_info()
         if not cl.user_id:
             raise InstagramError(
-                "Sessão incompleta para editar perfil. Em Contas, cole um sessionid novo e clique em Salvar e reconectar.",
+                "Sessão incompleta. Reconecte em Contas (senha ou sessionid novo).",
                 kind="login_required",
             )
 
-        only_bio = (
-            biography is not None
-            and not (full_name is not None and str(full_name).strip())
-            and not (external_url is not None and str(external_url).strip())
-        )
+        edit_kwargs: dict[str, str] = {}
+        if biography is not None:
+            edit_kwargs["biography"] = biography.strip()
+        if full_name is not None and str(full_name).strip():
+            edit_kwargs["full_name"] = full_name.strip()
+        if external_url is not None:
+            edit_kwargs["external_url"] = external_url.strip()
 
-        if only_bio:
-            cl.account_set_biography(biography.strip())
-            changed.append("biography")
-        else:
-            edit_kwargs: dict[str, str] = {}
-            if biography is not None:
-                edit_kwargs["biography"] = biography.strip()
-            if full_name is not None and full_name.strip():
-                edit_kwargs["full_name"] = full_name.strip()
-            if external_url is not None and external_url.strip():
-                edit_kwargs["external_url"] = external_url.strip()
-            if edit_kwargs:
-                cl.account_edit(**edit_kwargs)
-                changed.extend(edit_kwargs.keys())
+        if edit_kwargs:
+            cl.account_edit(**edit_kwargs)
+            changed.extend(edit_kwargs.keys())
 
         if picture_path:
             pic = Path(picture_path)
