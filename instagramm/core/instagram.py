@@ -124,6 +124,74 @@ def _client_from_account(account, settings: dict):
     return cl
 
 
+def _extract_sessionid(settings: dict | None) -> str | None:
+    """Tenta obter sessionid dos settings da instagrapi."""
+    if not settings:
+        return None
+    auth = settings.get("authorization_data") or {}
+    sid = auth.get("sessionid")
+    if sid:
+        return str(sid).strip()
+    cookies = settings.get("cookies") or {}
+    if isinstance(cookies, dict):
+        for key, val in cookies.items():
+            if key == "sessionid" and val:
+                return str(val).strip()
+            if isinstance(val, dict) and val.get("name") == "sessionid":
+                v = val.get("value")
+                if v:
+                    return str(v).strip()
+    return None
+
+
+def _saved_sessionid(account) -> str | None:
+    from core.crypto import decrypt_secret
+
+    sid = decrypt_secret(getattr(account, "sessionid_enc", "") or "") or None
+    if sid:
+        return sid.strip()
+    if account.session_json:
+        try:
+            return _extract_sessionid(json.loads(account.session_json))
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
+def _relogin(account, cl) -> None:
+    """Tenta relogar com senha ou sessionid salvo."""
+    from core.crypto import decrypt_secret
+
+    pwd = decrypt_secret(account.password_enc) or None
+    sid = _saved_sessionid(account)
+    if account.username and pwd:
+        cl.login(account.username, pwd)
+        return
+    if sid:
+        cl.login_by_sessionid(sid)
+        return
+    raise InstagramError(
+        "Sessão expirada. Reconecte em Contas (senha ou sessionid).",
+        kind="login_required",
+    )
+
+
+def _run_authed(account, callback):
+    """Executa ação autenticada com relogin automático (igual ao post de reels)."""
+    from instagrapi.exceptions import LoginRequired
+
+    if not account.session_json:
+        raise InstagramError("Conta sem sessão. Conecte a conta.")
+    settings = json.loads(account.session_json)
+    cl = _client_from_account(account, settings)
+    try:
+        result = callback(cl)
+    except LoginRequired:
+        _relogin(account, cl)
+        result = callback(cl)
+    return result, cl.get_settings()
+
+
 def verify_session(account) -> dict[str, Any]:
     """Confere se a sessão salva ainda é válida."""
     if not account.session_json:
@@ -320,14 +388,8 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     try:
         media = _do()
     except LoginRequired:
-        # tenta re-login automático com a senha salva
-        from core.crypto import decrypt_secret
-
-        pwd = decrypt_secret(account.password_enc)
-        if not (account.username and pwd):
-            raise InstagramError("Sessão expirada e sem senha salva. Reconecte a conta.")
+        _relogin(account, cl)
         try:
-            cl.login(account.username, pwd)
             media = _do()
         except Exception as exc:  # noqa: BLE001
             raise InstagramError(_friendly(exc)) from exc
@@ -351,22 +413,19 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
 
 def get_profile(account) -> dict[str, Any]:
     """Lê bio, link e nome do perfil conectado."""
-    if not account.session_json:
-        raise InstagramError("Conta sem sessão. Conecte antes de editar o perfil.")
-    settings = json.loads(account.session_json)
-    cl = _client_from_account(account, settings)
-    try:
+
+    def work(cl):
         info = cl.account_info()
-    except Exception as exc:  # noqa: BLE001
-        raise InstagramError(_friendly(exc)) from exc
-    return {
-        "settings": cl.get_settings(),
-        "username": info.username,
-        "full_name": getattr(info, "full_name", "") or "",
-        "biography": getattr(info, "biography", "") or "",
-        "external_url": getattr(info, "external_url", "") or "",
-        "profile_pic_url": str(getattr(info, "profile_pic_url", "") or ""),
-    }
+        return {
+            "username": info.username,
+            "full_name": getattr(info, "full_name", "") or "",
+            "biography": getattr(info, "biography", "") or "",
+            "external_url": getattr(info, "external_url", "") or "",
+            "profile_pic_url": str(getattr(info, "profile_pic_url", "") or ""),
+        }
+
+    data, settings = _run_authed(account, work)
+    return {**data, "settings": settings}
 
 
 def edit_profile(
@@ -378,26 +437,24 @@ def edit_profile(
     picture_path: str | None = None,
 ) -> dict[str, Any]:
     """Atualiza bio, link, nome e/ou foto de perfil."""
-    if not account.session_json:
-        raise InstagramError("Conta sem sessão. Conecte antes de editar o perfil.")
 
-    settings = json.loads(account.session_json)
-    cl = _client_from_account(account, settings)
-    changed = []
-
-    try:
+    def work(cl):
+        changed: list[str] = []
         info = cl.account_info()
 
-        # bio usa endpoint próprio (não exige e-mail)
         if biography is not None:
             cl.account_set_biography(biography.strip())
             changed.append("biography")
 
         edit_data: dict[str, str] = {}
         if external_url is not None:
-            edit_data["external_url"] = external_url.strip()
+            url = external_url.strip()
+            if url:
+                edit_data["external_url"] = url
         if full_name is not None:
-            edit_data["full_name"] = full_name.strip()
+            name = full_name.strip()
+            if name:
+                edit_data["full_name"] = name
         if edit_data:
             email = getattr(info, "public_email", None) or getattr(info, "email", None) or ""
             phone = getattr(info, "phone_number", None) or ""
@@ -414,9 +471,13 @@ def edit_profile(
                 raise InstagramError(f"Foto não encontrada: {picture_path}")
             cl.account_change_picture(pic)
             changed.append("profile_picture")
+        return changed
+
+    try:
+        changed, settings = _run_authed(account, work)
     except InstagramError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise InstagramError(_friendly(exc)) from exc
 
-    return {"settings": cl.get_settings(), "changed": changed}
+    return {"settings": settings, "changed": changed}

@@ -33,6 +33,7 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(120))
     username: Mapped[str] = mapped_column(String(120), default="")
     password_enc: Mapped[str] = mapped_column(Text, default="")
+    sessionid_enc: Mapped[str] = mapped_column(Text, default="")
     session_json: Mapped[str] = mapped_column(Text, default="")
     proxy_url: Mapped[str] = mapped_column(String(512), default="")
     default_caption: Mapped[str] = mapped_column(Text, default="")
@@ -183,6 +184,9 @@ def _ensure_columns() -> None:
             "scrolls_per_run": "INTEGER DEFAULT 1",
             "active_start_hour": "INTEGER DEFAULT 8",
             "active_end_hour": "INTEGER DEFAULT 23",
+        },
+        "accounts": {
+            "sessionid_enc": "TEXT DEFAULT ''",
         },
     }
     with engine.begin() as conn:

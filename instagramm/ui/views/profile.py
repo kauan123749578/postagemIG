@@ -89,18 +89,25 @@ class ProfileView(BaseView):
         self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
 
     def _fill_accounts(self, accounts):
-        self.accounts = [a for a in accounts if a["status"] == "healthy"]
+        self.accounts = [a for a in accounts if a.get("has_session")]
         if not self.accounts:
             self.account_menu.configure(values=["Nenhuma conta conectada"])
             self.account_menu.set("Nenhuma conta conectada")
             return
-        labels = [f"{a['name']} (@{a['username']})" for a in self.accounts]
+        labels = []
+        for a in self.accounts:
+            label = f"{a['name']} (@{a['username']})"
+            if a.get("status") != "healthy":
+                label += " — reconectar"
+            labels.append(label)
         self.account_menu.configure(values=labels)
         target = None
         if self.preselect_account_id:
             for a in self.accounts:
                 if a["id"] == self.preselect_account_id:
                     target = f"{a['name']} (@{a['username']})"
+                    if a.get("status") != "healthy":
+                        target += " — reconectar"
                     break
             self.preselect_account_id = None
         if target and target in labels:
@@ -112,7 +119,8 @@ class ProfileView(BaseView):
     def _selected_account_id(self):
         label = self.account_menu.get()
         for a in self.accounts:
-            if f"{a['name']} (@{a['username']})" == label:
+            base = f"{a['name']} (@{a['username']})"
+            if label == base or label == f"{base} — reconectar":
                 return a["id"]
         return None
 
@@ -195,5 +203,7 @@ class ProfileView(BaseView):
                 msg = res.get("message", "Erro")
                 self.status.configure(text=f"❌ {msg}", text_color=theme.DANGER)
                 self.app.toast(msg, "error")
+                if "expirada" in msg.lower() or "reconecte" in msg.lower():
+                    self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
 
         self.app.run_async(task, on_done=done)

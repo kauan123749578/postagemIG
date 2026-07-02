@@ -47,6 +47,8 @@ class AccountsView(BaseView):
         widgets.field_label(inner, "Sessionid do navegador (opcional)").pack(anchor="w", pady=(8, 2))
         self.sessionid_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
         self.sessionid_box.pack(fill="x", pady=(0, 4))
+        self.sessionid_hint = widgets.subtitle(inner, "Sessionid fica salvo criptografado no seu computador")
+        self.sessionid_hint.pack(anchor="w", pady=(0, 4))
         widgets.subtitle(inner, "Chrome → instagram.com logado → F12 → Application → Cookies → sessionid").pack(anchor="w", pady=(0, 8))
 
         row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -139,6 +141,7 @@ class AccountsView(BaseView):
         meta = f"📊 {usage['posts_last_24h']} posts/24h" + ("" if usage["unlimited_day"] else f"/{acc['max_posts_per_day']}")
         meta += "    " + ("🛡 Proxy" if acc["proxy_url"] else "○ Sem proxy")
         meta += "    " + ("🔑 Senha salva" if acc.get("has_password") else "○ Sem senha")
+        meta += "    " + ("🍪 Sessionid" if acc.get("has_sessionid") else "")
         ctk.CTkLabel(info, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w", pady=(4, 0))
 
         if acc["status"] != "healthy" and acc["status_message"]:
@@ -185,6 +188,7 @@ class AccountsView(BaseView):
                 name=data["name"],
                 username=data["username"],
                 password=data["password"] or None,
+                sessionid=data["sessionid"] or None,
                 proxy_url=data["proxy_url"],
                 max_posts_per_day=data["max_posts_per_day"],
                 max_posts_per_hour=data["max_posts_per_hour"],
@@ -197,7 +201,7 @@ class AccountsView(BaseView):
         self.app.run_async(task, on_done=done)
 
     def _open_profile(self, acc):
-        if acc["status"] != "healthy":
+        if not acc.get("has_session"):
             self.app.toast("Conecte a conta antes de editar o perfil", "error")
             return
         self.app.show_profile(acc["id"])
@@ -224,7 +228,9 @@ class AccountsView(BaseView):
                 acc_id = self.edit_id
                 service.save_account_settings(
                     acc_id, name=data["name"], username=data["username"],
-                    password=data["password"] or None, proxy_url=data["proxy_url"],
+                    password=data["password"] or None,
+                    sessionid=data["sessionid"] or None,
+                    proxy_url=data["proxy_url"],
                     max_posts_per_day=data["max_posts_per_day"],
                     max_posts_per_hour=data["max_posts_per_hour"],
                 )
@@ -301,6 +307,16 @@ class AccountsView(BaseView):
             )
         self.fields["proxy_url"].delete(0, "end"); self.fields["proxy_url"].insert(0, acc["proxy_url"] or "")
         self.sessionid_box.delete("1.0", "end")
+        if acc.get("has_sessionid"):
+            self.sessionid_hint.configure(
+                text="✓ Sessionid já salvo — cole um novo só se quiser trocar",
+                text_color=theme.SUCCESS,
+            )
+        else:
+            self.sessionid_hint.configure(
+                text="Sessionid fica salvo criptografado no seu computador",
+                text_color=theme.MUTED,
+            )
         self.fields["max_posts_per_day"].delete(0, "end"); self.fields["max_posts_per_day"].insert(0, str(acc["max_posts_per_day"]))
         self.fields["max_posts_per_hour"].delete(0, "end"); self.fields["max_posts_per_hour"].insert(0, str(acc["max_posts_per_hour"]))
         self.connect_btn.configure(text="💾  Salvar e reconectar")
@@ -340,6 +356,7 @@ class AccountsView(BaseView):
                 e.insert(0, "0")
         self.sessionid_box.delete("1.0", "end")
         self.password_hint.configure(text="A senha fica salva criptografada no seu computador", text_color=theme.MUTED)
+        self.sessionid_hint.configure(text="Sessionid fica salvo criptografado no seu computador", text_color=theme.MUTED)
         self.connect_btn.configure(text="🔗  Conectar conta")
 
 

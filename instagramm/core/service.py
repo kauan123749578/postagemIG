@@ -70,6 +70,14 @@ def _is_session_expired_message(message: str) -> bool:
     return any(x in low for x in ("sessão expirada", "loginrequired", "login required", "refaça o login"))
 
 
+def _persist_sessionid_from_settings(acc: Account, settings: dict) -> None:
+    if acc.sessionid_enc:
+        return
+    sid = ig._extract_sessionid(settings)
+    if sid:
+        acc.sessionid_enc = encrypt_secret(sid)
+
+
 def _mark_session_expired(db, acc: Account, message: str) -> None:
     acc.status = "error"
     acc.status_message = message or "Sessão expirada. Refaça o login em Contas."
@@ -99,6 +107,7 @@ def _account_dict(acc: Account, db) -> dict:
         "status_message": acc.status_message,
         "has_session": bool(acc.session_json),
         "has_password": bool(acc.password_enc),
+        "has_sessionid": bool(getattr(acc, "sessionid_enc", "")),
         "usage": stats,
         "loop_running": bool(loop and loop.is_running),
         "loop_posts": loop.total_posts if loop else 0,
@@ -151,6 +160,10 @@ def update_account(account_id: int, **fields) -> None:
             pwd = fields.pop("password")
             if pwd:
                 acc.password_enc = encrypt_secret(pwd)
+        if "sessionid" in fields:
+            sid = fields.pop("sessionid")
+            if sid:
+                acc.sessionid_enc = encrypt_secret(sid.strip())
         if "username" in fields and fields["username"] is not None:
             fields["username"] = fields["username"].strip().lstrip("@").lower()
         if "proxy_url" in fields and fields["proxy_url"] is not None:
@@ -174,8 +187,10 @@ def save_account_settings(account_id: int, **fields) -> dict:
     """Salva proxy, limites e dados da conta sem tentar reconectar."""
     if "password" in fields and not fields["password"]:
         fields.pop("password")
+    if "sessionid" in fields and not fields["sessionid"]:
+        fields.pop("sessionid")
     update_account(account_id, **fields)
-    return {"ok": True, "message": "Dados da conta salvos (proxy, limites, etc.)"}
+    return {"ok": True, "message": "Dados da conta salvos (proxy, sessionid, limites, etc.)"}
 
 
 def connect_account(
@@ -194,6 +209,14 @@ def connect_account(
         if password:
             acc.password_enc = encrypt_secret(password)
             db.flush()
+
+        sid_input = (sessionid or "").strip()
+        if sid_input:
+            acc.sessionid_enc = encrypt_secret(sid_input)
+            db.flush()
+
+        saved_sid = decrypt_secret(acc.sessionid_enc) or None if acc.sessionid_enc else None
+        effective_sid = sid_input or saved_sid
         pwd = password or decrypt_secret(acc.password_enc) or None
 
         # reaproveita device da 1ª tentativa quando enviando o código 2FA
@@ -205,14 +228,21 @@ def connect_account(
                 settings = None
 
         try:
-            result = ig.login(
-                username=acc.username,
-                password=pwd,
-                sessionid=sessionid,
-                verification_code=verification_code,
-                proxy_url=acc.proxy_url,
-                settings=settings if not (sessionid and sessionid.strip()) else None,
-            )
+            if effective_sid and not pwd and not verification_code:
+                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url)
+            elif acc.username and pwd:
+                result = ig.login(
+                    username=acc.username,
+                    password=pwd,
+                    sessionid=sid_input or None,
+                    verification_code=verification_code,
+                    proxy_url=acc.proxy_url,
+                    settings=settings if not (sid_input) else None,
+                )
+            elif effective_sid:
+                result = ig.login(sessionid=effective_sid, proxy_url=acc.proxy_url)
+            else:
+                return {"status": "error", "message": "Informe senha ou sessionid para conectar."}
         except ig.InstagramError as exc:
             if exc.kind == "two_factor":
                 if exc.settings:
@@ -220,7 +250,7 @@ def connect_account(
                 acc.status = "pending"
                 acc.status_message = "Aguardando código 2FA"
                 return {"status": "needs_2fa", "message": str(exc)}
-            if _is_session_expired_message(str(exc)):
+            if getattr(exc, "kind", "") == "login_required" or _is_session_expired_message(str(exc)):
                 _mark_session_expired(db, acc, str(exc))
             else:
                 acc.status = "error"
@@ -229,6 +259,7 @@ def connect_account(
 
         _pending_2fa.pop(account_id, None)
         acc.session_json = json.dumps(result["settings"])
+        _persist_sessionid_from_settings(acc, result["settings"])
         acc.username = result.get("username") or acc.username
         acc.status = "healthy"
         acc.status_message = "Conectada"
@@ -522,6 +553,9 @@ def get_profile(account_id: int) -> dict:
         try:
             result = ig.get_profile(acc)
             acc.session_json = json.dumps(result["settings"])
+            acc.status = "healthy"
+            acc.status_message = "Conectada"
+            _persist_sessionid_from_settings(acc, result["settings"])
             _export_session_file(acc.username, result["settings"])
             return {
                 "ok": True,
@@ -533,7 +567,7 @@ def get_profile(account_id: int) -> dict:
             }
         except ig.InstagramError as exc:
             msg = str(exc)
-            if _is_session_expired_message(msg):
+            if getattr(exc, "kind", "") == "login_required":
                 _mark_session_expired(db, acc, msg)
             return {"ok": False, "message": msg}
 
@@ -559,6 +593,9 @@ def update_profile(
                 picture_path=picture_path,
             )
             acc.session_json = json.dumps(result["settings"])
+            acc.status = "healthy"
+            acc.status_message = "Conectada"
+            _persist_sessionid_from_settings(acc, result["settings"])
             _export_session_file(acc.username, result["settings"])
             parts = []
             if biography is not None:
@@ -573,7 +610,7 @@ def update_profile(
             return {"ok": True, "message": "Perfil atualizado com sucesso"}
         except ig.InstagramError as exc:
             msg = str(exc)
-            if _is_session_expired_message(msg):
+            if getattr(exc, "kind", "") == "login_required":
                 _mark_session_expired(db, acc, msg)
             notify.log_event(f"Falha ao editar perfil: {msg}", "error", acc.name)
             return {"ok": False, "message": msg}
