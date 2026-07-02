@@ -48,6 +48,14 @@ class DashboardView(BaseView):
             ctk.CTkLabel(card, text=label, font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w", padx=16, pady=(0, 14))
             self.stat_cards[key] = value
 
+        self.activity_card, self.activity_body = widgets.section(
+            self.scroll,
+            "Atividade agora",
+            "Contas com loop, aquecimento ou fila em execução",
+            icon="🟢",
+        )
+        self.activity_card.pack(fill="x", pady=(16, 0))
+
         # gráficos
         charts = ctk.CTkFrame(self.scroll, fg_color="transparent")
         charts.pack(fill="x", pady=(16, 0))
@@ -84,8 +92,12 @@ class DashboardView(BaseView):
 
     def _reload(self):
         self.app.run_async(service.dashboard_stats, on_done=self._render_stats)
+        self.app.run_async(service.list_running_tasks, on_done=self._render_activity)
         self.app.run_async(lambda: service.chart_data(7), on_done=self._render_charts)
         self.app.run_async(lambda: service.recent_logs(12), on_done=self._render_logs)
+
+    def _render_activity(self, tasks):
+        widgets.render_running_tasks(self.activity_body, tasks, empty_text="Nenhuma conta rodando no momento")
 
     def _render_stats(self, stats):
         self.stat_cards["connected"].configure(text=f"{stats['connected']}/{stats['accounts']}")

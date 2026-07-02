@@ -16,7 +16,15 @@ class LoopView(BaseView):
         self.videos = []  # list[{video_path, cover_path, caption}]
 
         widgets.title(self, "Loop de publicação", size=24).pack(anchor="w")
-        widgets.subtitle(self, "Publica os vídeos da lista em sequência (contínuo) ou em lotes (recorrente)").pack(anchor="w", pady=(0, 16))
+        widgets.subtitle(self, "Publica os vídeos da lista em sequência (contínuo) ou em lotes (recorrente)").pack(anchor="w", pady=(0, 12))
+
+        self.running_card, self.running_body = widgets.section(
+            self,
+            "Contas rodando agora",
+            "Loops, aquecimento e fila escalonada ativos",
+            icon="▶",
+        )
+        self.running_card.pack(fill="x", pady=(0, 12))
 
         top = widgets.card(self)
         top.pack(fill="x")
@@ -109,9 +117,9 @@ class LoopView(BaseView):
 
     def on_show(self):
         self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
-        self._update_running_badge()
+        self._update_running_panel()
 
-    def _update_running_badge(self):
+    def _update_running_panel(self):
         def done(count):
             if count > 0:
                 self.stop_all_btn.configure(text=f"⏹ Parar TODOS ({count})")
@@ -119,9 +127,16 @@ class LoopView(BaseView):
                 self.stop_all_btn.configure(text="⏹ Parar TODOS os loops")
 
         self.app.run_async(service.count_running_loops, on_done=done)
+        self.app.run_async(service.list_running_tasks, on_done=self._render_running_panel)
+
+    def _render_running_panel(self, tasks):
+        widgets.render_running_tasks(
+            self.running_body, tasks, empty_text="Nenhuma conta rodando no momento",
+        )
 
     def refresh(self):
         self._load_loop()
+        self._update_running_panel()
 
     def _fill_accounts(self, accounts):
         self.accounts = accounts
@@ -293,14 +308,18 @@ class LoopView(BaseView):
             service.save_loop(acc_id, videos, interval, caption, **kw)
             service.set_loop_running(acc_id, True)
 
-        self.app.run_async(task, on_done=lambda _r: (self.app.toast("Loop iniciado", "success"), self._load_loop(), self._update_running_badge()))
+        self.app.run_async(task, on_done=lambda _r: (
+            self.app.toast("Loop iniciado", "success"), self._load_loop(), self._update_running_panel(),
+        ))
 
     def _stop(self):
         acc_id = self._selected_account_id()
         if not acc_id:
             return
         self.app.run_async(lambda: service.set_loop_running(acc_id, False),
-                           on_done=lambda _r: (self.app.toast("Loop parado", "info"), self._load_loop(), self._update_running_badge()))
+                           on_done=lambda _r: (
+                               self.app.toast("Loop parado", "info"), self._load_loop(), self._update_running_panel(),
+                           ))
 
     def _stop_all(self):
         self.app.run_async(service.stop_all_loops, on_done=self._after_stop_all)
@@ -311,7 +330,7 @@ class LoopView(BaseView):
         else:
             self.app.toast("Nenhum loop estava rodando", "info")
         self._load_loop()
-        self._update_running_badge()
+        self._update_running_panel()
 
 
 def _to_int(value, default, lo=30):

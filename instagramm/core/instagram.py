@@ -485,3 +485,63 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         "code": getattr(media, "code", ""),
         "settings": settings,
     }
+
+
+_STORY_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".avi"}
+_STORY_PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _story_media_kind(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in _STORY_VIDEO_EXT:
+        return "video"
+    if ext in _STORY_PHOTO_EXT:
+        return "photo"
+    raise InstagramError(f"Formato não suportado para Story: {ext or '(sem extensão)'}")
+
+
+def post_story(account, media_path: str, caption: str = "") -> dict[str, Any]:
+    """Publica foto ou vídeo como Story. Retorna {media_pk, code, settings, kind}."""
+    media = Path(media_path)
+    if not media.exists():
+        raise InstagramError(f"Mídia não encontrada: {media_path}")
+    kind = _story_media_kind(media)
+    temp_thumb: Path | None = None
+    try:
+
+        def work(cl):
+            nonlocal temp_thumb
+            if kind == "photo":
+                return cl.photo_upload_to_story(media, caption or "")
+            thumb = None
+            from core.video_deps import make_video_thumbnail
+
+            try:
+                temp_thumb = make_video_thumbnail(media)
+                thumb = temp_thumb
+            except Exception:  # noqa: BLE001
+                thumb = None
+            return cl.video_upload_to_story(media, caption or "", thumbnail=thumb)
+
+        story, settings = _run_authed(account, work)
+    except InstagramError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        name = exc.__class__.__name__
+        exc_kind = "rate_limit" if name in ("PleaseWaitFewMinutes", "ClientThrottledError") else "error"
+        if _needs_relogin(exc):
+            exc_kind = "login_required"
+        raise InstagramError(_friendly(exc), kind=exc_kind) from exc
+    finally:
+        if temp_thumb and temp_thumb.is_file():
+            try:
+                temp_thumb.unlink()
+            except OSError:
+                pass
+
+    return {
+        "media_pk": str(story.pk),
+        "code": getattr(story, "code", ""),
+        "settings": settings,
+        "kind": kind,
+    }

@@ -477,6 +477,50 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             return {"ok": False, "message": str(exc), "kind": exc.kind}
 
 
+def post_story_now(account_id: int, media_path: str, caption: str = "") -> dict:
+    """Publica um Story (foto ou vídeo) imediatamente e registra no log."""
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        if not acc:
+            return {"ok": False, "message": "Conta não encontrada"}
+        final_caption = caption or ""
+        try:
+            result = ig.post_story(acc, media_path, final_caption)
+            acc.session_json = json.dumps(result["settings"])
+            acc.status = "healthy"
+            acc.status_message = "Conectada"
+            _persist_sessionid_from_settings(acc, result["settings"])
+            _export_session_file(acc.username, result["settings"])
+            db.add(PostLog(
+                account_id=acc.id,
+                media_id=result["media_pk"],
+                media_type="story",
+                caption_preview=final_caption[:300],
+                video_path=media_path,
+                status="success",
+            ))
+            kind = "vídeo" if result.get("kind") == "video" else "foto"
+            metrics.bump("post")
+            notify.log_event(f"Story publicado ({kind}) 📸", "success", acc.name)
+            return {"ok": True, "media_pk": result["media_pk"], "kind": result.get("kind", "")}
+        except ig.InstagramError as exc:
+            db.add(PostLog(
+                account_id=acc.id,
+                media_type="story",
+                video_path=media_path,
+                status="error",
+                error_message=str(exc),
+            ))
+            acc.status = "error" if exc.kind != "rate_limit" else acc.status
+            if getattr(exc, "kind", "") == "login_required" or _is_session_expired_message(str(exc)):
+                _mark_session_expired(db, acc, str(exc))
+            else:
+                acc.status_message = str(exc)
+            metrics.bump("error")
+            notify.log_event(f"Falha ao publicar Story: {exc}", "error", acc.name)
+            return {"ok": False, "message": str(exc), "kind": exc.kind}
+
+
 def recent_logs(limit: int = 50) -> list[dict]:
     with session_scope() as db:
         rows = (
@@ -645,6 +689,76 @@ def dashboard_stats() -> dict:
             "posts_24h": posts_today,
             "scheduled_pending": pending,
         }
+
+
+def list_running_tasks() -> list[dict]:
+    """Lista automações ativas (loops, aquecimento, fila escalonada)."""
+    items: list[dict] = []
+    with session_scope() as db:
+        loops = (
+            db.query(LoopConfig, Account)
+            .join(Account, LoopConfig.account_id == Account.id)
+            .filter(LoopConfig.is_running.is_(True))
+            .order_by(Account.name)
+            .all()
+        )
+        for loop, acc in loops:
+            mode = "recorrente" if loop.mode == "recorrente" else "contínuo"
+            posts = loop.total_posts or 0
+            detail = f"{posts} publicação(ões)" if posts else "iniciando"
+            if loop.last_error:
+                detail = loop.last_error[:80]
+            items.append({
+                "type": "loop",
+                "account_id": acc.id,
+                "name": acc.name,
+                "username": acc.username,
+                "title": f"{acc.name} (@{acc.username})",
+                "activity": f"Loop {mode}",
+                "detail": detail,
+                "icon": "🔁",
+            })
+
+        warms = (
+            db.query(WarmConfig, Account)
+            .join(Account, WarmConfig.account_id == Account.id)
+            .filter(WarmConfig.is_running.is_(True))
+            .order_by(Account.name)
+            .all()
+        )
+        for warm, acc in warms:
+            detail = (warm.last_summary or "aquecendo").strip()[:80]
+            items.append({
+                "type": "warm",
+                "account_id": acc.id,
+                "name": acc.name,
+                "username": acc.username,
+                "title": f"{acc.name} (@{acc.username})",
+                "activity": "Aquecendo conta",
+                "detail": detail,
+                "icon": "🔥",
+            })
+
+        stagger = (
+            db.query(StaggerItem, Account)
+            .join(Account, StaggerItem.account_id == Account.id)
+            .filter(StaggerItem.status == "pending")
+            .order_by(StaggerItem.activate_at)
+            .all()
+        )
+        for item, acc in stagger:
+            when = item.activate_at.strftime("%H:%M") if item.activate_at else "—"
+            items.append({
+                "type": "stagger",
+                "account_id": acc.id,
+                "name": acc.name,
+                "username": acc.username,
+                "title": f"{acc.name} (@{acc.username})",
+                "activity": "Fila escalonada",
+                "detail": f"ativa às {when}",
+                "icon": "⚡",
+            })
+    return items
 
 
 # ---------------- Gráficos / métricas ----------------

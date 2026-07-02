@@ -114,6 +114,39 @@ def status_pill(master, status):
     )
 
 
+def render_running_tasks(container, tasks, *, empty_text="Nenhuma automação rodando no momento"):
+    """Preenche um frame com a lista de contas/automações ativas."""
+    for child in container.winfo_children():
+        child.destroy()
+    if not tasks:
+        ctk.CTkLabel(
+            container, text=empty_text, text_color=theme.MUTED, font=(theme.FONT, 12),
+        ).pack(anchor="w", pady=8)
+        return
+    for task in tasks:
+        row = ctk.CTkFrame(container, fg_color=theme.CARD2, corner_radius=10)
+        row.pack(fill="x", pady=4)
+        ctk.CTkLabel(row, text=task.get("icon", "●"), font=(theme.FONT, 16)).pack(
+            side="left", padx=(12, 6), pady=10,
+        )
+        text_frame = ctk.CTkFrame(row, fg_color="transparent")
+        text_frame.pack(side="left", fill="x", expand=True, pady=8)
+        ctk.CTkLabel(
+            text_frame, text=task["title"], font=(theme.FONT, 13, "bold"),
+            text_color=theme.TEXT, anchor="w",
+        ).pack(anchor="w")
+        sub = task.get("activity", "")
+        if task.get("detail"):
+            sub = f"{sub} · {task['detail']}"
+        ctk.CTkLabel(
+            text_frame, text=sub, font=(theme.FONT, 11),
+            text_color=theme.SUCCESS, anchor="w",
+        ).pack(anchor="w")
+        chip(row, "RODANDO", color=theme.SUCCESS, soft=theme.SUCCESS_SOFT).pack(
+            side="right", padx=12, pady=10,
+        )
+
+
 class Stepper(ctk.CTkFrame):
     """Campo numérico premium com botões – e +."""
 

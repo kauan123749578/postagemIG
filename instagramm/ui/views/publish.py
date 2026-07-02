@@ -1,4 +1,4 @@
-"""Tela Publicar: postar um Reel imediatamente."""
+"""Tela Publicar: postar Reel ou Story imediatamente."""
 from pathlib import Path
 from tkinter import filedialog
 
@@ -13,16 +13,26 @@ class PublishView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
         self.accounts = []
-        self.video_path = None
+        self.media_path = None
         self.cover_path = None
+        self.mode = "reel"
 
-        widgets.title(self, "Publicar Reel", size=24).pack(anchor="w")
-        widgets.subtitle(self, "Envie um vídeo do seu computador direto para o Instagram").pack(anchor="w", pady=(0, 16))
+        widgets.title(self, "Publicar", size=24).pack(anchor="w")
+        widgets.subtitle(self, "Envie Reels ou Stories do seu computador direto para o Instagram").pack(anchor="w", pady=(0, 16))
 
         card = widgets.card(self)
         card.pack(fill="both", expand=True)
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=22, pady=22)
+
+        widgets.field_label(inner, "Tipo").pack(anchor="w", pady=(0, 2))
+        self.mode_seg = ctk.CTkSegmentedButton(
+            inner, values=["Reel", "Story"], command=self._on_mode_change,
+            fg_color=theme.CARD2, selected_color=theme.PRIMARY, selected_hover_color=theme.PRIMARY_HOVER,
+            unselected_color=theme.CARD2, text_color=theme.TEXT,
+        )
+        self.mode_seg.set("Reel")
+        self.mode_seg.pack(anchor="w", pady=(0, 12))
 
         widgets.field_label(inner, "Conta").pack(anchor="w", pady=(0, 2))
         self.account_menu = ctk.CTkOptionMenu(inner, values=["Carregando..."], fg_color=theme.CARD2,
@@ -30,21 +40,25 @@ class PublishView(BaseView):
                                               dropdown_fg_color=theme.CARD2, height=40)
         self.account_menu.pack(fill="x", pady=(0, 12))
 
-        widgets.field_label(inner, "Vídeo (.mp4)").pack(anchor="w", pady=(0, 2))
+        self.media_label_field = widgets.field_label(inner, "Vídeo (.mp4)")
+        self.media_label_field.pack(anchor="w", pady=(0, 2))
         vrow = ctk.CTkFrame(inner, fg_color="transparent")
         vrow.pack(fill="x", pady=(0, 12))
-        self.video_label = ctk.CTkLabel(vrow, text="Nenhum vídeo selecionado", text_color=theme.MUTED, font=(theme.FONT, 12), anchor="w")
-        self.video_label.pack(side="left", fill="x", expand=True)
-        widgets.ghost_button(vrow, "Escolher vídeo", self._pick_video).pack(side="right")
+        self.media_label = ctk.CTkLabel(vrow, text="Nenhum arquivo selecionado", text_color=theme.MUTED, font=(theme.FONT, 12), anchor="w")
+        self.media_label.pack(side="left", fill="x", expand=True)
+        self.pick_media_btn = widgets.ghost_button(vrow, "Escolher vídeo", self._pick_media)
+        self.pick_media_btn.pack(side="right")
 
-        widgets.field_label(inner, "Capa / thumbnail (opcional)").pack(anchor="w", pady=(0, 2))
-        crow = ctk.CTkFrame(inner, fg_color="transparent")
-        crow.pack(fill="x", pady=(0, 12))
-        self.cover_label = ctk.CTkLabel(crow, text="Capa automática do vídeo", text_color=theme.MUTED, font=(theme.FONT, 12), anchor="w")
+        self.cover_field = widgets.field_label(inner, "Capa / thumbnail (opcional)")
+        self.cover_field.pack(anchor="w", pady=(0, 2))
+        self.cover_row = ctk.CTkFrame(inner, fg_color="transparent")
+        self.cover_row.pack(fill="x", pady=(0, 12))
+        self.cover_label = ctk.CTkLabel(self.cover_row, text="Capa automática do vídeo", text_color=theme.MUTED, font=(theme.FONT, 12), anchor="w")
         self.cover_label.pack(side="left", fill="x", expand=True)
-        widgets.ghost_button(crow, "Escolher capa", self._pick_cover).pack(side="right")
+        widgets.ghost_button(self.cover_row, "Escolher capa", self._pick_cover).pack(side="right")
 
-        widgets.field_label(inner, "Legenda").pack(anchor="w", pady=(0, 2))
+        self.caption_field = widgets.field_label(inner, "Legenda")
+        self.caption_field.pack(anchor="w", pady=(0, 2))
         self.caption_box = ctk.CTkTextbox(inner, height=120, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
         self.caption_box.pack(fill="x", pady=(0, 16))
 
@@ -53,6 +67,25 @@ class PublishView(BaseView):
 
     def on_show(self):
         self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
+
+    def _on_mode_change(self, value):
+        self.mode = "story" if value == "Story" else "reel"
+        self.media_path = None
+        self.cover_path = None
+        self.media_label.configure(text="Nenhum arquivo selecionado", text_color=theme.MUTED)
+        self.cover_label.configure(text="Capa automática do vídeo", text_color=theme.MUTED)
+        if self.mode == "story":
+            self.media_label_field.configure(text="FOTO OU VÍDEO")
+            self.pick_media_btn.configure(text="Escolher mídia")
+            self.cover_field.pack_forget()
+            self.cover_row.pack_forget()
+            self.publish_btn.configure(text="📸  Publicar Story agora")
+        else:
+            self.media_label_field.configure(text="VÍDEO (.MP4)")
+            self.pick_media_btn.configure(text="Escolher vídeo")
+            self.cover_field.pack(anchor="w", pady=(0, 2), before=self.caption_field)
+            self.cover_row.pack(fill="x", pady=(0, 12), before=self.caption_field)
+            self.publish_btn.configure(text="🚀  Publicar Reel agora")
 
     def _fill_accounts(self, accounts):
         self.accounts = [a for a in accounts if a["status"] == "healthy"]
@@ -71,11 +104,19 @@ class PublishView(BaseView):
                 return a["id"]
         return None
 
-    def _pick_video(self):
-        path = filedialog.askopenfilename(title="Escolher vídeo", filetypes=[("Vídeos", "*.mp4 *.mov *.m4v *.webm *.avi")])
+    def _pick_media(self):
+        if self.mode == "story":
+            path = filedialog.askopenfilename(
+                title="Escolher foto ou vídeo para Story",
+                filetypes=[("Mídia", "*.jpg *.jpeg *.png *.webp *.mp4 *.mov *.m4v *.webm")],
+            )
+        else:
+            path = filedialog.askopenfilename(
+                title="Escolher vídeo", filetypes=[("Vídeos", "*.mp4 *.mov *.m4v *.webm *.avi")],
+            )
         if path:
-            self.video_path = path
-            self.video_label.configure(text=Path(path).name, text_color=theme.TEXT)
+            self.media_path = path
+            self.media_label.configure(text=Path(path).name, text_color=theme.TEXT)
 
     def _pick_cover(self):
         path = filedialog.askopenfilename(title="Escolher capa", filetypes=[("Imagens", "*.jpg *.jpeg *.png *.webp")])
@@ -88,24 +129,31 @@ class PublishView(BaseView):
         if not acc_id:
             self.app.toast("Selecione uma conta conectada", "error")
             return
-        if not self.video_path:
-            self.app.toast("Escolha um vídeo", "error")
+        if not self.media_path:
+            label = "mídia" if self.mode == "story" else "vídeo"
+            self.app.toast(f"Escolha um(a) {label}", "error")
             return
         caption = self.caption_box.get("1.0", "end").strip()
-        self.publish_btn.configure(state="disabled", text="Publicando... (pode demorar)")
+        busy = "Publicando Story..." if self.mode == "story" else "Publicando Reel... (pode demorar)"
+        self.publish_btn.configure(state="disabled", text=busy)
 
         def task():
-            return service.post_reel_now(acc_id, self.video_path, caption, self.cover_path)
+            if self.mode == "story":
+                return service.post_story_now(acc_id, self.media_path, caption)
+            return service.post_reel_now(acc_id, self.media_path, caption, self.cover_path)
 
         def done(res):
-            self.publish_btn.configure(state="normal", text="🚀  Publicar Reel agora")
+            btn = "📸  Publicar Story agora" if self.mode == "story" else "🚀  Publicar Reel agora"
+            self.publish_btn.configure(state="normal", text=btn)
             if res.get("ok"):
-                self.app.toast("Reel publicado com sucesso!", "success")
+                msg = "Story publicado com sucesso!" if self.mode == "story" else "Reel publicado com sucesso!"
+                self.app.toast(msg, "success")
             else:
                 self.app.toast(res.get("message", "Falha ao publicar"), "error")
 
         def err(exc):
-            self.publish_btn.configure(state="normal", text="🚀  Publicar Reel agora")
+            btn = "📸  Publicar Story agora" if self.mode == "story" else "🚀  Publicar Reel agora"
+            self.publish_btn.configure(state="normal", text=btn)
             self.app.toast(str(exc), "error")
 
         self.app.run_async(task, on_done=done, on_error=err)
