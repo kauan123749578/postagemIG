@@ -16,16 +16,34 @@ class InstagramError(Exception):
 
 def _friendly(exc: Exception) -> str:
     name = exc.__class__.__name__
+    raw = str(exc) or name
+    low = raw.lower()
+    if "email or confirmed phone" in low or "email" in low and "confirmed phone" in low:
+        return "Conta sem e-mail ou telefone confirmado no Instagram. Confirme no app oficial antes de editar."
+    if "chat not found" in low:
+        pass
     hints = {
         "BadPassword": "Usuário ou senha inválidos.",
         "TwoFactorRequired": "Conta com verificação em duas etapas (2FA).",
         "ChallengeRequired": "O Instagram pediu verificação extra. Tente login por sessionid.",
         "PleaseWaitFewMinutes": "Muitas tentativas. Aguarde alguns minutos.",
-        "LoginRequired": "Sessão expirada. Refaça o login.",
+        "LoginRequired": "Sessão expirada. Refaça o login em Contas.",
         "ClientThrottledError": "Limite do Instagram atingido. Aguarde antes de postar.",
         "ProxyAddressIsBlocked": "Proxy bloqueado pelo Instagram.",
     }
-    return hints.get(name, str(exc) or name)
+    if name in hints:
+        return hints[name]
+    # erros JSON/dict da API
+    if raw.startswith("{") and "errors" in raw:
+        try:
+            import ast
+            data = ast.literal_eval(raw)
+            errs = data.get("errors") if isinstance(data, dict) else None
+            if isinstance(errs, list) and errs:
+                return str(errs[0])
+        except Exception:  # noqa: BLE001
+            pass
+    return raw
 
 
 from core.proxy import normalize_proxy_url
@@ -368,16 +386,27 @@ def edit_profile(
     changed = []
 
     try:
-        data: dict[str, str] = {}
+        info = cl.account_info()
+
+        # bio usa endpoint próprio (não exige e-mail)
         if biography is not None:
-            data["biography"] = biography.strip()
+            cl.account_set_biography(biography.strip())
+            changed.append("biography")
+
+        edit_data: dict[str, str] = {}
         if external_url is not None:
-            data["external_url"] = external_url.strip()
+            edit_data["external_url"] = external_url.strip()
         if full_name is not None:
-            data["full_name"] = full_name.strip()
-        if data:
-            cl.account_edit(**data)
-            changed.extend(data.keys())
+            edit_data["full_name"] = full_name.strip()
+        if edit_data:
+            email = getattr(info, "public_email", None) or getattr(info, "email", None) or ""
+            phone = getattr(info, "phone_number", None) or ""
+            if email:
+                edit_data["email"] = str(email)
+            elif phone:
+                edit_data["phone_number"] = str(phone)
+            cl.account_edit(**edit_data)
+            changed.extend(edit_data.keys())
 
         if picture_path:
             pic = Path(picture_path)

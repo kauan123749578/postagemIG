@@ -56,6 +56,8 @@ class AccountsView(BaseView):
 
         self.connect_btn = widgets.primary_button(inner, "🔗  Conectar conta", self._save_and_connect)
         self.connect_btn.pack(fill="x", pady=(10, 6))
+        self.save_only_btn = widgets.ghost_button(inner, "💾  Salvar proxy e dados (sem conectar)", self._save_settings_only)
+        self.save_only_btn.pack(fill="x", pady=(0, 6))
         widgets.ghost_button(inner, "Limpar", self._reset_form).pack(fill="x")
 
         ctk.CTkFrame(inner, height=1, fg_color=theme.BORDER).pack(fill="x", pady=14)
@@ -145,6 +147,9 @@ class AccountsView(BaseView):
         connect_btn = widgets.primary_button(actions, label, lambda a=acc: self._connect_existing(a))
         connect_btn.configure(height=34, width=110)
         connect_btn.pack(side="left", padx=(0, 6))
+        ctk.CTkButton(actions, text="Perfil IG", height=34, width=90, corner_radius=10, fg_color="transparent",
+                      border_width=1, border_color=theme.BORDER, text_color=theme.TEXT, hover_color=theme.CARD,
+                      command=lambda a=acc: self._open_profile(a)).pack(side="left", padx=(0, 6))
         ctk.CTkButton(actions, text="Editar", height=34, width=80, corner_radius=10, fg_color="transparent",
                       border_width=1, border_color=theme.BORDER, text_color=theme.TEXT, hover_color=theme.CARD,
                       command=lambda a=acc: self._edit(a)).pack(side="left", padx=(0, 6))
@@ -160,6 +165,39 @@ class AccountsView(BaseView):
             "max_posts_per_day": _to_int(self.fields["max_posts_per_day"].get()),
             "max_posts_per_hour": _to_int(self.fields["max_posts_per_hour"].get()),
         }
+
+    def _save_settings_only(self):
+        """Salva proxy, limites e nome sem exigir reconexão."""
+        data = self._read_form()
+        if not data["name"]:
+            self.app.toast("Informe o nome interno", "error")
+            return
+        if self.edit_id is None:
+            self.app.toast("Primeiro conecte a conta ou clique em Editar numa conta existente", "error")
+            return
+
+        def task():
+            service.save_account_settings(
+                self.edit_id,
+                name=data["name"],
+                username=data["username"],
+                password=data["password"] or None,
+                proxy_url=data["proxy_url"],
+                max_posts_per_day=data["max_posts_per_day"],
+                max_posts_per_hour=data["max_posts_per_hour"],
+            )
+
+        def done(_r):
+            self.app.toast("Proxy e dados salvos com sucesso", "success")
+            self._reload()
+
+        self.app.run_async(task, on_done=done)
+
+    def _open_profile(self, acc):
+        if acc["status"] != "healthy":
+            self.app.toast("Conecte a conta antes de editar o perfil", "error")
+            return
+        self.app.show_profile(acc["id"])
 
     def _save_and_connect(self):
         data = self._read_form()
@@ -181,26 +219,27 @@ class AccountsView(BaseView):
                 )
             else:
                 acc_id = self.edit_id
-                service.update_account(
-                    acc_id, name=data["name"], username=data["username"], password=data["password"],
-                    proxy_url=data["proxy_url"], max_posts_per_day=data["max_posts_per_day"],
+                service.save_account_settings(
+                    acc_id, name=data["name"], username=data["username"],
+                    password=data["password"] or None, proxy_url=data["proxy_url"],
+                    max_posts_per_day=data["max_posts_per_day"],
                     max_posts_per_hour=data["max_posts_per_hour"],
                 )
-            res = service.connect_account(acc_id, sessionid=data["sessionid"] or None)
-            return acc_id, data["username"], res
+            res = service.connect_account(acc_id, password=data["password"] or None, sessionid=data["sessionid"] or None)
+            return acc_id, data["username"], res, data["proxy_url"]
 
         self.app.run_async(task, on_done=self._after_connect, on_error=self._connect_failed)
 
     def _connect_existing(self, acc):
         self.app.toast("Conectando...", "info")
         self.app.run_async(
-            lambda: (acc["id"], acc["username"], service.connect_account(acc["id"])),
+            lambda: (acc["id"], acc["username"], service.connect_account(acc["id"]), acc.get("proxy_url", "")),
             on_done=self._after_connect,
         )
 
     def _after_connect(self, payload):
-        acc_id, username, res = payload
-        self.connect_btn.configure(state="normal", text=("💾  Salvar alterações" if self.edit_id else "🔗  Conectar conta"))
+        acc_id, username, res, proxy_saved = payload
+        self.connect_btn.configure(state="normal", text=("💾  Salvar e reconectar" if self.edit_id else "🔗  Conectar conta"))
         status = res.get("status")
         if status == "connected":
             self.app.toast("Conta conectada com sucesso", "success")
@@ -208,11 +247,17 @@ class AccountsView(BaseView):
         elif status == "needs_2fa":
             self._open_2fa(acc_id, username)
         else:
-            self.app.toast(res.get("message", "Falha ao conectar"), "error")
+            msg = res.get("message", "Falha ao conectar")
+            if proxy_saved and self.edit_id:
+                self.app.toast(f"Dados salvos, mas: {msg}", "error")
+            else:
+                self.app.toast(msg, "error")
+            if "expirada" in msg.lower() or "login" in msg.lower():
+                self.app.alert_session_expired(username or "conta")
         self._reload()
 
     def _connect_failed(self, exc):
-        self.connect_btn.configure(state="normal", text=("💾  Salvar alterações" if self.edit_id else "🔗  Conectar conta"))
+        self.connect_btn.configure(state="normal", text=("💾  Salvar e reconectar" if self.edit_id else "🔗  Conectar conta"))
         self.app.toast(str(exc), "error")
 
     def _open_2fa(self, acc_id, username):
@@ -245,7 +290,7 @@ class AccountsView(BaseView):
         self.sessionid_box.delete("1.0", "end")
         self.fields["max_posts_per_day"].delete(0, "end"); self.fields["max_posts_per_day"].insert(0, str(acc["max_posts_per_day"]))
         self.fields["max_posts_per_hour"].delete(0, "end"); self.fields["max_posts_per_hour"].insert(0, str(acc["max_posts_per_hour"]))
-        self.connect_btn.configure(text="💾  Salvar alterações")
+        self.connect_btn.configure(text="💾  Salvar e reconectar")
 
     def _delete(self, acc):
         if not confirm(self.app, f"Excluir a conta '{acc['name']}'?", "Excluir conta"):

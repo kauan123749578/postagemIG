@@ -65,6 +65,17 @@ def _export_session_file(username: str, settings: dict) -> None:
         pass
 
 
+def _is_session_expired_message(message: str) -> bool:
+    low = (message or "").lower()
+    return any(x in low for x in ("sessão expirada", "loginrequired", "login required", "refaça o login"))
+
+
+def _mark_session_expired(db, acc: Account, message: str) -> None:
+    acc.status = "error"
+    acc.status_message = message or "Sessão expirada. Refaça o login em Contas."
+    notify.log_event("⚠️ Sessão expirada — faça login novamente em Contas", "warning", acc.name)
+
+
 def recent_events(limit: int = 80) -> list[dict]:
     """Eventos do sistema (conexões, posts, aquecimento, erros)."""
     return notify.recent_events(limit)
@@ -159,6 +170,14 @@ def delete_account(account_id: int) -> None:
             db.delete(acc)
 
 
+def save_account_settings(account_id: int, **fields) -> dict:
+    """Salva proxy, limites e dados da conta sem tentar reconectar."""
+    if "password" in fields and not fields["password"]:
+        fields.pop("password")
+    update_account(account_id, **fields)
+    return {"ok": True, "message": "Dados da conta salvos (proxy, limites, etc.)"}
+
+
 def connect_account(
     account_id: int,
     *,
@@ -201,8 +220,11 @@ def connect_account(
                 acc.status = "pending"
                 acc.status_message = "Aguardando código 2FA"
                 return {"status": "needs_2fa", "message": str(exc)}
-            acc.status = "error"
-            acc.status_message = str(exc)
+            if _is_session_expired_message(str(exc)):
+                _mark_session_expired(db, acc, str(exc))
+            else:
+                acc.status = "error"
+                acc.status_message = str(exc)
             return {"status": "error", "message": str(exc)}
 
         _pending_2fa.pop(account_id, None)
@@ -228,9 +250,36 @@ def check_account(account_id: int) -> dict:
             _export_session_file(acc.username, result["settings"])
             return {"status": "healthy", "message": "Sessão válida"}
         except ig.InstagramError as exc:
-            acc.status = "error"
-            acc.status_message = str(exc)
-            return {"status": "error", "message": str(exc)}
+            msg = str(exc)
+            if _is_session_expired_message(msg):
+                _mark_session_expired(db, acc, msg)
+            else:
+                acc.status = "error"
+                acc.status_message = msg
+            return {"status": "error", "message": msg}
+
+
+def check_all_accounts() -> list[dict]:
+    """Verifica todas as contas com sessão salva. Retorna as que expiraram."""
+    expired = []
+    with session_scope() as db:
+        accounts = db.query(Account).filter(Account.session_json != "").all()
+        for acc in accounts:
+            try:
+                result = ig.verify_session(acc)
+                acc.session_json = json.dumps(result["settings"])
+                acc.status = "healthy"
+                acc.status_message = "Conectada"
+                _export_session_file(acc.username, result["settings"])
+            except ig.InstagramError as exc:
+                msg = str(exc)
+                if _is_session_expired_message(msg):
+                    _mark_session_expired(db, acc, msg)
+                    expired.append({"id": acc.id, "name": acc.name, "username": acc.username})
+                else:
+                    acc.status = "error"
+                    acc.status_message = msg
+    return expired
 
 
 # ---------------- Mídia ----------------
@@ -343,7 +392,10 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
                 error_message=str(exc),
             ))
             acc.status = "error" if exc.kind != "rate_limit" else acc.status
-            acc.status_message = str(exc)
+            if _is_session_expired_message(str(exc)):
+                _mark_session_expired(db, acc, str(exc))
+            else:
+                acc.status_message = str(exc)
             metrics.bump("error")
             notify.log_event(f"Falha ao publicar Reel: {exc}", "error", acc.name)
             return {"ok": False, "message": str(exc), "kind": exc.kind}
@@ -480,7 +532,10 @@ def get_profile(account_id: int) -> dict:
                 "profile_pic_url": result.get("profile_pic_url", ""),
             }
         except ig.InstagramError as exc:
-            return {"ok": False, "message": str(exc)}
+            msg = str(exc)
+            if _is_session_expired_message(msg):
+                _mark_session_expired(db, acc, msg)
+            return {"ok": False, "message": msg}
 
 
 def update_profile(
@@ -517,8 +572,11 @@ def update_profile(
             notify.log_event("Perfil atualizado: " + ", ".join(parts), "success", acc.name)
             return {"ok": True, "message": "Perfil atualizado com sucesso"}
         except ig.InstagramError as exc:
-            notify.log_event(f"Falha ao editar perfil: {exc}", "error", acc.name)
-            return {"ok": False, "message": str(exc)}
+            msg = str(exc)
+            if _is_session_expired_message(msg):
+                _mark_session_expired(db, acc, msg)
+            notify.log_event(f"Falha ao editar perfil: {msg}", "error", acc.name)
+            return {"ok": False, "message": msg}
 
 
 # ---------------- Agendamentos ----------------

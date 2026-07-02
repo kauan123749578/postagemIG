@@ -70,6 +70,27 @@ class App(ctk.CTk):
 
         self.show_view("dashboard")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(1500, self._check_sessions_on_start)
+
+    def show_profile(self, account_id: int):
+        """Abre Editar perfil com a conta já selecionada."""
+        self.show_view("profile")
+        view = self._views.get("profile")
+        if view:
+            view.select_account(account_id)
+
+    def alert_session_expired(self, account_name: str):
+        self.toast(f"⚠️ Sessão de {account_name} expirou — reconecte em Contas", "error")
+
+    def _check_sessions_on_start(self):
+        def done(expired):
+            if not expired:
+                return
+            names = ", ".join(e["name"] for e in expired[:3])
+            extra = f" (+{len(expired)-3})" if len(expired) > 3 else ""
+            self.toast(f"⚠️ Sessão expirada: {names}{extra}. Reconecte em Contas.", "error")
+
+        self.run_async(service.check_all_accounts, on_done=done)
 
     # ---------- layout ----------
     def _build_layout(self):
