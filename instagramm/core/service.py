@@ -565,11 +565,6 @@ def get_profile(account_id: int) -> dict:
             return {"ok": False, "message": "Conta não encontrada"}
         try:
             result = ig.get_profile(acc)
-            acc.session_json = json.dumps(result["settings"])
-            acc.status = "healthy"
-            acc.status_message = "Conectada"
-            _persist_sessionid_from_settings(acc, result["settings"])
-            _export_session_file(acc.username, result["settings"])
             return {
                 "ok": True,
                 "username": result.get("username", ""),
@@ -580,8 +575,6 @@ def get_profile(account_id: int) -> dict:
             }
         except ig.InstagramError as exc:
             msg = str(exc)
-            if getattr(exc, "kind", "") == "login_required":
-                _mark_session_expired(db, acc, msg)
             return {"ok": False, "message": msg}
 
 
@@ -605,11 +598,6 @@ def update_profile(
                 full_name=full_name,
                 picture_path=picture_path,
             )
-            acc.session_json = json.dumps(result["settings"])
-            acc.status = "healthy"
-            acc.status_message = "Conectada"
-            _persist_sessionid_from_settings(acc, result["settings"])
-            _export_session_file(acc.username, result["settings"])
             parts = []
             if biography is not None:
                 parts.append("bio")
@@ -623,8 +611,6 @@ def update_profile(
             return {"ok": True, "message": "Perfil atualizado com sucesso"}
         except ig.InstagramError as exc:
             msg = str(exc)
-            if getattr(exc, "kind", "") == "login_required":
-                _mark_session_expired(db, acc, msg)
             notify.log_event(f"Falha ao editar perfil: {msg}", "error", acc.name)
             return {"ok": False, "message": msg}
 

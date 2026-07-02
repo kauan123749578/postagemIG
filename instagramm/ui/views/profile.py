@@ -15,6 +15,7 @@ class ProfileView(BaseView):
         self.accounts = []
         self.picture_path = None
         self.preselect_account_id: int | None = None
+        self._loaded_profile: dict | None = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -129,6 +130,7 @@ class ProfileView(BaseView):
         self.bio_box.delete("1.0", "end")
         self.link_entry.delete(0, "end")
         self.picture_path = None
+        self._loaded_profile = None
         self.pic_label.configure(text="Nenhuma foto selecionada", text_color=theme.MUTED)
         self.status.configure(text="")
 
@@ -151,6 +153,11 @@ class ProfileView(BaseView):
             self.bio_box.insert("1.0", res.get("biography", ""))
             self.link_entry.delete(0, "end")
             self.link_entry.insert(0, res.get("external_url", ""))
+            self._loaded_profile = {
+                "full_name": res.get("full_name", ""),
+                "biography": res.get("biography", ""),
+                "external_url": res.get("external_url", ""),
+            }
             self.status.configure(text=f"✅ Perfil de @{res.get('username', '')} carregado", text_color=theme.SUCCESS)
 
         self.app.run_async(lambda: service.get_profile(acc_id), on_done=done)
@@ -176,8 +183,24 @@ class ProfileView(BaseView):
         full_name = self.name_entry.get().strip()
         picture = self.picture_path
 
-        if not any([biography, external_url, full_name, picture]):
-            self.app.toast("Preencha ao menos um campo ou escolha uma foto", "error")
+        bio_arg = external_arg = name_arg = None
+        if self._loaded_profile is None:
+            if biography:
+                bio_arg = biography
+            if external_url:
+                external_arg = external_url
+            if full_name:
+                name_arg = full_name
+        else:
+            if biography != self._loaded_profile.get("biography", ""):
+                bio_arg = biography
+            if external_url != self._loaded_profile.get("external_url", ""):
+                external_arg = external_url
+            if full_name != self._loaded_profile.get("full_name", ""):
+                name_arg = full_name
+
+        if not any([bio_arg is not None, external_arg is not None, name_arg is not None, picture]):
+            self.app.toast("Nenhuma alteração detectada — carregue o perfil e mude algo antes de salvar", "error")
             return
 
         self.save_top_btn.configure(state="disabled", text="Salvando...")
@@ -186,9 +209,9 @@ class ProfileView(BaseView):
         def task():
             return service.update_profile(
                 acc_id,
-                biography=biography,
-                external_url=external_url,
-                full_name=full_name,
+                biography=bio_arg,
+                external_url=external_arg,
+                full_name=name_arg,
                 picture_path=picture,
             )
 
@@ -199,11 +222,16 @@ class ProfileView(BaseView):
                 self.app.toast("Perfil atualizado", "success")
                 self.picture_path = None
                 self.pic_label.configure(text="Nenhuma foto selecionada", text_color=theme.MUTED)
+                if self._loaded_profile is not None:
+                    if bio_arg is not None:
+                        self._loaded_profile["biography"] = biography
+                    if external_arg is not None:
+                        self._loaded_profile["external_url"] = external_url
+                    if name_arg is not None:
+                        self._loaded_profile["full_name"] = full_name
             else:
                 msg = res.get("message", "Erro")
                 self.status.configure(text=f"❌ {msg}", text_color=theme.DANGER)
                 self.app.toast(msg, "error")
-                if "expirada" in msg.lower() or "reconecte" in msg.lower():
-                    self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
 
         self.app.run_async(task, on_done=done)

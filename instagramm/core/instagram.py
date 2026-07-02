@@ -234,15 +234,16 @@ def _relogin(account, cl) -> None:
         pass
 
 
-def _run_authed(account, callback):
+def _run_authed(account, callback, *, preserve_session: bool = False):
     """Executa ação com a sessão salva — sem relogin automático (evita derrubar sessão do navegador)."""
     if not account.session_json:
         raise InstagramError("Conta sem sessão. Conecte a conta.")
-    settings = json.loads(account.session_json)
-    cl = _client_from_account(account, settings)
+    original_settings = json.loads(account.session_json)
+    cl = _client_from_account(account, original_settings)
     try:
         result = callback(cl)
-        return result, cl.get_settings()
+        settings = original_settings if preserve_session else cl.get_settings()
+        return result, settings
     except Exception as exc:
         if _needs_relogin(exc):
             raise InstagramError(
@@ -251,6 +252,34 @@ def _run_authed(account, callback):
                 kind="login_required",
             ) from exc
         raise
+
+
+def _profile_edit_payload(info, *, biography: str | None = None, full_name: str | None = None, external_url: str | None = None) -> dict:
+    """Monta payload do accounts/edit_profile/ sem chamar set_biography (evita invalidar sessão do navegador)."""
+    email = getattr(info, "public_email", None) or getattr(info, "email", None) or ""
+    phone = getattr(info, "phone_number", None) or ""
+    data: dict[str, str] = {}
+    if email:
+        data["email"] = str(email)
+    elif phone:
+        data["phone_number"] = str(phone)
+    else:
+        raise InstagramError(
+            "Conta sem e-mail ou telefone confirmado no Instagram. Confirme no app oficial antes de editar.",
+        )
+    current_name = (getattr(info, "full_name", None) or "").strip()
+    current_url = (getattr(info, "external_url", None) or "").strip()
+    if full_name is not None and full_name.strip():
+        data["first_name"] = full_name.strip()
+    elif current_name:
+        data["first_name"] = current_name
+    if external_url is not None and external_url.strip():
+        data["external_url"] = external_url.strip()
+    elif current_url:
+        data["external_url"] = current_url
+    if biography is not None:
+        data["biography"] = biography.strip()
+    return data
 
 
 def verify_session(account) -> dict[str, Any]:
@@ -475,7 +504,7 @@ def get_profile(account) -> dict[str, Any]:
             "profile_pic_url": str(getattr(info, "profile_pic_url", "") or ""),
         }
 
-    data, settings = _run_authed(account, work)
+    data, settings = _run_authed(account, work, preserve_session=True)
     return {**data, "settings": settings}
 
 
@@ -493,28 +522,27 @@ def edit_profile(
         changed: list[str] = []
         info = cl.account_info()
 
-        if biography is not None:
-            cl.account_set_biography(biography.strip())
-            changed.append("biography")
-
-        edit_data: dict[str, str] = {}
-        if external_url is not None:
-            url = external_url.strip()
-            if url:
-                edit_data["external_url"] = url
-        if full_name is not None:
-            name = full_name.strip()
-            if name:
-                edit_data["full_name"] = name
-        if edit_data:
-            email = getattr(info, "public_email", None) or getattr(info, "email", None) or ""
-            phone = getattr(info, "phone_number", None) or ""
-            if email:
-                edit_data["email"] = str(email)
-            elif phone:
-                edit_data["phone_number"] = str(phone)
-            cl.account_edit(**edit_data)
-            changed.extend(edit_data.keys())
+        has_text_edit = any([
+            biography is not None,
+            external_url is not None and external_url.strip(),
+            full_name is not None and full_name.strip(),
+        ])
+        if has_text_edit:
+            payload = _profile_edit_payload(
+                info,
+                biography=biography,
+                full_name=full_name,
+                external_url=external_url,
+            )
+            result = cl.private_request("accounts/edit_profile/", cl.with_default_data(payload))
+            if result.get("status") != "ok" and "user" not in result:
+                raise InstagramError(f"Falha ao editar perfil: {result}")
+            if biography is not None:
+                changed.append("biography")
+            if full_name is not None and full_name.strip():
+                changed.append("full_name")
+            if external_url is not None and external_url.strip():
+                changed.append("external_url")
 
         if picture_path:
             pic = Path(picture_path)
@@ -525,7 +553,7 @@ def edit_profile(
         return changed
 
     try:
-        changed, settings = _run_authed(account, work)
+        changed, settings = _run_authed(account, work, preserve_session=True)
     except InstagramError:
         raise
     except Exception as exc:  # noqa: BLE001
