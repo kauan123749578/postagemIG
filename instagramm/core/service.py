@@ -588,65 +588,6 @@ def stop_all_loops() -> int:
     return stopped
 
 
-# ---------------- Perfil ----------------
-
-def get_profile(account_id: int) -> dict:
-    with session_scope() as db:
-        acc = db.get(Account, account_id)
-        if not acc:
-            return {"ok": False, "message": "Conta não encontrada"}
-        try:
-            result = ig.get_profile(acc)
-            return {
-                "ok": True,
-                "username": result.get("username", ""),
-                "full_name": result.get("full_name", ""),
-                "biography": result.get("biography", ""),
-                "external_url": result.get("external_url", ""),
-                "profile_pic_url": result.get("profile_pic_url", ""),
-            }
-        except ig.InstagramError as exc:
-            msg = str(exc)
-            return {"ok": False, "message": msg}
-
-
-def update_profile(
-    account_id: int,
-    *,
-    biography: str | None = None,
-    external_url: str | None = None,
-    full_name: str | None = None,
-    picture_path: str | None = None,
-) -> dict:
-    with session_scope() as db:
-        acc = db.get(Account, account_id)
-        if not acc:
-            return {"ok": False, "message": "Conta não encontrada"}
-        try:
-            result = ig.edit_profile(
-                acc,
-                biography=biography,
-                external_url=external_url,
-                full_name=full_name,
-                picture_path=picture_path,
-            )
-            parts = []
-            if biography is not None:
-                parts.append("bio")
-            if external_url is not None:
-                parts.append("link")
-            if full_name is not None:
-                parts.append("nome")
-            if picture_path:
-                parts.append("foto")
-            notify.log_event("Perfil atualizado: " + ", ".join(parts), "success", acc.name)
-            return {"ok": True, "message": "Perfil atualizado com sucesso"}
-        except ig.InstagramError as exc:
-            msg = str(exc)
-            notify.log_event(f"Falha ao editar perfil: {msg}", "error", acc.name)
-            return {"ok": False, "message": msg}
-
-
 # ---------------- Agendamentos ----------------
 
 def add_scheduled(account_id: int, video_path: str, scheduled_at: datetime, caption: str = "", cover_path: str = "") -> None:

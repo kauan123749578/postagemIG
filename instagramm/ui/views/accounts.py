@@ -153,9 +153,6 @@ class AccountsView(BaseView):
         connect_btn = widgets.primary_button(actions, label, lambda a=acc: self._connect_existing(a))
         connect_btn.configure(height=34, width=110)
         connect_btn.pack(side="left", padx=(0, 6))
-        ctk.CTkButton(actions, text="Perfil IG", height=34, width=90, corner_radius=10, fg_color="transparent",
-                      border_width=1, border_color=theme.BORDER, text_color=theme.TEXT, hover_color=theme.CARD,
-                      command=lambda a=acc: self._open_profile(a)).pack(side="left", padx=(0, 6))
         ctk.CTkButton(actions, text="Editar", height=34, width=80, corner_radius=10, fg_color="transparent",
                       border_width=1, border_color=theme.BORDER, text_color=theme.TEXT, hover_color=theme.CARD,
                       command=lambda a=acc: self._edit(a)).pack(side="left", padx=(0, 6))
@@ -199,12 +196,6 @@ class AccountsView(BaseView):
             self._reload()
 
         self.app.run_async(task, on_done=done)
-
-    def _open_profile(self, acc):
-        if not acc.get("has_session"):
-            self.app.toast("Conecte a conta antes de editar o perfil", "error")
-            return
-        self.app.show_profile(acc["id"])
 
     def _save_and_connect(self):
         data = self._read_form()

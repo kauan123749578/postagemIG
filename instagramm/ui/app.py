@@ -13,7 +13,6 @@ from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
 from ui.views.loop import LoopView
 from ui.views.media import MediaView
-from ui.views.profile import ProfileView
 from ui.views.publish import PublishView
 from ui.views.schedule import ScheduleView
 from ui.views.settings import SettingsView
@@ -24,7 +23,6 @@ NAV = [
     ("dashboard", "  📊  Dashboard"),
     ("accounts", "  👤  Contas"),
     ("publish", "  🚀  Publicar"),
-    ("profile", "  ✏️  Editar perfil"),
     ("loop", "  🔁  Loop (contínuo/recorrente)"),
     ("stagger", "  ⚡  Fila escalonada"),
     ("warm", "  🔥  Aquecer contas"),
@@ -38,7 +36,6 @@ VIEW_CLASSES = {
     "dashboard": DashboardView,
     "accounts": AccountsView,
     "publish": PublishView,
-    "profile": ProfileView,
     "loop": LoopView,
     "stagger": StaggerView,
     "warm": WarmView,
@@ -74,13 +71,6 @@ class App(ctk.CTk):
         self.show_view("dashboard")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(1500, self._check_sessions_on_start)
-
-    def show_profile(self, account_id: int):
-        """Abre Editar perfil com a conta já selecionada."""
-        self.show_view("profile")
-        view = self._views.get("profile")
-        if view:
-            view.select_account(account_id)
 
     def alert_session_expired(self, account_name: str):
         self.toast(f"⚠️ Sessão de {account_name} expirou — reconecte em Contas", "error")
