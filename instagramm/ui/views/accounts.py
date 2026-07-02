@@ -39,6 +39,8 @@ class AccountsView(BaseView):
         self.fields["name"] = self._add_field(inner, "Nome interno", "Ex.: Conta principal")
         self.fields["username"] = self._add_field(inner, "Usuário do Instagram", "sem o @")
         self.fields["password"] = self._add_field(inner, "Senha", "senha da conta", show="•")
+        self.password_hint = widgets.subtitle(inner, "A senha fica salva criptografada no seu computador")
+        self.password_hint.pack(anchor="w", pady=(2, 0))
         self.fields["proxy_url"] = self._add_field(inner, "Proxy (opcional)", "ip:porta:usuario:senha")
         widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: 185.72.240.96:7132:usuario:senha  ·  http://usuario:senha@ip:porta  ·  socks5://usuario:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 0))
 
@@ -136,6 +138,7 @@ class AccountsView(BaseView):
         usage = acc["usage"]
         meta = f"📊 {usage['posts_last_24h']} posts/24h" + ("" if usage["unlimited_day"] else f"/{acc['max_posts_per_day']}")
         meta += "    " + ("🛡 Proxy" if acc["proxy_url"] else "○ Sem proxy")
+        meta += "    " + ("🔑 Senha salva" if acc.get("has_password") else "○ Sem senha")
         ctk.CTkLabel(info, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w", pady=(4, 0))
 
         if acc["status"] != "healthy" and acc["status_message"]:
@@ -286,6 +289,16 @@ class AccountsView(BaseView):
         self.fields["name"].delete(0, "end"); self.fields["name"].insert(0, acc["name"])
         self.fields["username"].delete(0, "end"); self.fields["username"].insert(0, acc["username"] or "")
         self.fields["password"].delete(0, "end")
+        if acc.get("has_password"):
+            self.password_hint.configure(
+                text="✓ Senha já salva — deixe em branco para manter ou digite uma nova para trocar",
+                text_color=theme.SUCCESS,
+            )
+        else:
+            self.password_hint.configure(
+                text="Digite a senha para salvar e reconectar quando a sessão expirar",
+                text_color=theme.MUTED,
+            )
         self.fields["proxy_url"].delete(0, "end"); self.fields["proxy_url"].insert(0, acc["proxy_url"] or "")
         self.sessionid_box.delete("1.0", "end")
         self.fields["max_posts_per_day"].delete(0, "end"); self.fields["max_posts_per_day"].insert(0, str(acc["max_posts_per_day"]))
@@ -326,6 +339,7 @@ class AccountsView(BaseView):
             if key in ("max_posts_per_day", "max_posts_per_hour"):
                 e.insert(0, "0")
         self.sessionid_box.delete("1.0", "end")
+        self.password_hint.configure(text="A senha fica salva criptografada no seu computador", text_color=theme.MUTED)
         self.connect_btn.configure(text="🔗  Conectar conta")
 
 

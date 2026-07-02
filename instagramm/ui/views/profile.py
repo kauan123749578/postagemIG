@@ -80,11 +80,6 @@ class ProfileView(BaseView):
         self.status = ctk.CTkLabel(body, text="", font=(theme.FONT, 12), text_color=theme.MUTED, wraplength=700, justify="left")
         self.status.pack(anchor="w", pady=(8, 0))
 
-        # rodapé fixo com segundo botão salvar
-        footer = ctk.CTkFrame(self, fg_color=theme.CARD, corner_radius=14, border_width=1, border_color=theme.BORDER)
-        footer.grid(row=2, column=0, sticky="ew")
-        widgets.primary_button(footer, "💾  Salvar alterações no Instagram", self._save).pack(fill="x", padx=16, pady=14)
-
     def on_show(self):
         self.app.run_async(service.list_accounts, on_done=self._fill_accounts)
 

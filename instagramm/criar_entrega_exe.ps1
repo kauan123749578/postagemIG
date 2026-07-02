@@ -18,11 +18,17 @@ Write-Host "Origem (dist): $dist"
 Write-Host "Destino      : $destino"
 
 if (Test-Path $destino) {
-    Remove-Item $destino -Recurse -Force
+    try {
+        Remove-Item $destino -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Host "Aviso: nao foi possivel apagar a pasta antiga (feche o PostagemIG.exe). Sobrescrevendo arquivos..." -ForegroundColor Yellow
+    }
 }
-New-Item -ItemType Directory -Path $destino | Out-Null
+if (-not (Test-Path $destino)) {
+    New-Item -ItemType Directory -Path $destino | Out-Null
+}
 
-robocopy $dist $destino /E /NFL /NDL /NJH /NJS | Out-Null
+robocopy $dist $destino /E /NFL /NDL /NJH /NJS /IS /IT | Out-Null
 
 Copy-Item (Join-Path $origem "LEIA-ME-CLIENTE-EXE.txt") (Join-Path $destino "LEIA-ME.txt") -Force
 
