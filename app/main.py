@@ -65,7 +65,7 @@ logging.basicConfig(level=logging.INFO)
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-PUBLIC_PREFIXES = ("/static", "/media", "/login", "/api/auth/login", "/api/health")
+PUBLIC_PREFIXES = ("/static", "/media", "/login", "/api/auth/login", "/api/health", "/healthz")
 
 
 def _is_public(path: str) -> bool:
@@ -74,22 +74,36 @@ def _is_public(path: str) -> bool:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
-    migrate_schema()
-    db = SessionLocal()
+    # O startup NUNCA deve derrubar o processo — senão o healthcheck do Railway
+    # nunca fica saudável. Qualquer falha de banco é logada e o app sobe mesmo assim.
     recovery = {"recovered": False}
     try:
-        recovery = recover_sqlite_to_postgres(db)
-        if recovery.get("recovered"):
-            logging.info("Dados recuperados do SQLite: %s", recovery)
-        ensure_admin(db)
-    finally:
-        db.close()
+        Base.metadata.create_all(bind=engine)
+        migrate_schema()
+    except Exception:  # noqa: BLE001
+        logging.exception("Falha ao criar/migrar o schema no startup")
+    try:
+        db = SessionLocal()
+        try:
+            recovery = recover_sqlite_to_postgres(db)
+            if recovery.get("recovered"):
+                logging.info("Dados recuperados do SQLite: %s", recovery)
+            ensure_admin(db)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        logging.exception("Falha na recuperação/criação do admin no startup")
     app.state.db_recovery = recovery
-    start_loop_worker()
-    start_loop_stagger_worker()
-    start_schedule_worker()
-    start_recurring_batch_worker()
+    for starter in (
+        start_loop_worker,
+        start_loop_stagger_worker,
+        start_schedule_worker,
+        start_recurring_batch_worker,
+    ):
+        try:
+            starter()
+        except Exception:  # noqa: BLE001
+            logging.exception("Falha ao iniciar worker %s", getattr(starter, "__name__", starter))
     yield
 
 
@@ -448,9 +462,21 @@ def media_page(request: Request):
     return templates.TemplateResponse(request, "media.html", {"page": "media"})
 
 
+@app.get("/healthz")
+@app.get("/health")
+def healthz():
+    """Healthcheck leve: responde 200 na hora, sem tocar no banco.
+    Cobre configs do Railway que apontam para /healthz ou /health."""
+    return {"status": "ok"}
+
+
 @app.get("/api/health")
 def health_check(db: Session = Depends(get_db)):
-    storage = get_storage_status(db)
+    # não deixa o healthcheck falhar por causa do banco — retorna ok mesmo assim
+    try:
+        storage = get_storage_status(db)
+    except Exception:  # noqa: BLE001
+        storage = {"status": "unavailable"}
     return {
         "status": "ok",
         "base_url": APP_BASE_URL,
