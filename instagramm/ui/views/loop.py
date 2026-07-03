@@ -139,7 +139,20 @@ class LoopView(BaseView):
 
     def _render_running_panel(self, tasks):
         widgets.render_running_tasks(
-            self.running_body, tasks, empty_text="Nenhuma conta rodando no momento",
+            self.running_body, tasks,
+            empty_text="Nenhuma conta rodando no momento",
+            on_stop=self._stop_account,
+        )
+
+    def _stop_account(self, account_id):
+        if not account_id:
+            return
+        self.app.run_async(
+            lambda: service.set_loop_running(account_id, False),
+            on_done=lambda _r: (
+                self.app.toast("Loop desta conta parado", "info"),
+                self._load_loop(), self._update_running_panel(),
+            ),
         )
 
     def refresh(self):

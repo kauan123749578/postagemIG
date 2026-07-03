@@ -114,8 +114,12 @@ def status_pill(master, status):
     )
 
 
-def render_running_tasks(container, tasks, *, empty_text="Nenhuma automação rodando no momento"):
-    """Preenche um frame com a lista de contas/automações ativas."""
+def render_running_tasks(container, tasks, *, empty_text="Nenhuma automação rodando no momento", on_stop=None):
+    """Preenche um frame com a lista de contas/automações ativas.
+
+    Se `on_stop` for passado, mostra um botão "Parar" por conta de loop,
+    chamado como on_stop(account_id).
+    """
     for child in container.winfo_children():
         child.destroy()
     if not tasks:
@@ -142,8 +146,13 @@ def render_running_tasks(container, tasks, *, empty_text="Nenhuma automação ro
             text_frame, text=sub, font=(theme.FONT, 11),
             text_color=theme.SUCCESS, anchor="w",
         ).pack(anchor="w")
+        if on_stop is not None and task.get("type") == "loop":
+            acc_id = task.get("account_id")
+            danger_button(
+                row, "⏹ Parar", lambda i=acc_id: on_stop(i), height=32, width=90,
+            ).pack(side="right", padx=(6, 12), pady=10)
         chip(row, "RODANDO", color=theme.SUCCESS, soft=theme.SUCCESS_SOFT).pack(
-            side="right", padx=12, pady=10,
+            side="right", padx=(12, 6), pady=10,
         )
 
 

@@ -97,7 +97,19 @@ class DashboardView(BaseView):
         self.app.run_async(lambda: service.recent_logs(12), on_done=self._render_logs)
 
     def _render_activity(self, tasks):
-        widgets.render_running_tasks(self.activity_body, tasks, empty_text="Nenhuma conta rodando no momento")
+        widgets.render_running_tasks(
+            self.activity_body, tasks,
+            empty_text="Nenhuma conta rodando no momento",
+            on_stop=self._stop_account,
+        )
+
+    def _stop_account(self, account_id):
+        if not account_id:
+            return
+        self.app.run_async(
+            lambda: service.set_loop_running(account_id, False),
+            on_done=lambda _r: (self.app.toast("Loop parado", "info"), self._reload()),
+        )
 
     def _render_stats(self, stats):
         self.stat_cards["connected"].configure(text=f"{stats['connected']}/{stats['accounts']}")

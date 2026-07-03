@@ -3,6 +3,7 @@
 Rodam numa thread separada para não travar a interface.
 """
 import json
+import random
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -13,9 +14,33 @@ from core.db import Account, LoopConfig, ScheduledPost, SessionLocal, StaggerIte
 POLL_SECONDS = 5
 RATE_LIMIT_BACKOFF = 600  # 10 min após limite do Instagram
 
+# variação máxima do horário de postagem (para não parecer robô postando sempre no mesmo minuto)
+JITTER_MAX_SECONDS = 180  # ±3 min no máximo
+JITTER_FRACTION = 0.15    # ou ±15% do intervalo, o que for menor
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _jittered(base_seconds: float) -> float:
+    """Aplica uma variação aleatória ao intervalo para humanizar o horário do post."""
+    base = max(1.0, float(base_seconds))
+    spread = min(JITTER_MAX_SECONDS, base * JITTER_FRACTION)
+    offset = random.uniform(-spread, spread)
+    return max(15.0, base + offset)
+
+
+def _safe_commit(db) -> bool:
+    """Commita tentando de novo em caso de contenção do SQLite. Evita repost por commit perdido."""
+    for attempt in range(3):
+        try:
+            db.commit()
+            return True
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            time.sleep(0.5 * (attempt + 1))
+    return False
 
 
 class WorkerManager:
@@ -72,15 +97,15 @@ class WorkerManager:
                 if not videos:
                     loop.is_running = False
                     loop.last_error = "Sem vídeos na lista"
-                    db.commit()
+                    _safe_commit(db)
                     changed = True
                     continue
 
                 ok, reason = service.can_post(acc.id)
                 if not ok:
-                    loop.next_run_at = _now() + timedelta(seconds=120)
+                    loop.next_run_at = _now() + timedelta(seconds=_jittered(120))
                     loop.last_error = reason
-                    db.commit()
+                    _safe_commit(db)
                     changed = True
                     continue
 
@@ -105,11 +130,12 @@ class WorkerManager:
                         loop.current_index = (loop.current_index + 1) % len(videos)
                         loop.batch_remaining = max(0, (loop.batch_remaining or 1) - 1)
                         if loop.batch_remaining > 0:
-                            # próximo vídeo do mesmo lote
-                            loop.next_run_at = _now() + timedelta(seconds=loop.interval_seconds)
+                            # próximo vídeo do mesmo lote (com variação de tempo)
+                            loop.next_run_at = _now() + timedelta(seconds=_jittered(loop.interval_seconds))
                         else:
-                            # lote concluído — espera o intervalo recorrente
-                            loop.next_run_at = _now() + timedelta(minutes=loop.batch_interval_minutes or 360)
+                            # lote concluído — espera o intervalo recorrente (com variação)
+                            base = (loop.batch_interval_minutes or 360) * 60
+                            loop.next_run_at = _now() + timedelta(seconds=_jittered(base))
                     else:
                         # modo contínuo: posta cada vídeo uma vez e para no fim
                         next_index = loop.current_index + 1
@@ -127,12 +153,12 @@ class WorkerManager:
                                 pass
                         else:
                             loop.current_index = next_index
-                            loop.next_run_at = _now() + timedelta(seconds=loop.interval_seconds)
+                            loop.next_run_at = _now() + timedelta(seconds=_jittered(loop.interval_seconds))
                 else:
                     loop.last_error = result.get("message", "Erro")
                     backoff = RATE_LIMIT_BACKOFF if result.get("kind") == "rate_limit" else loop.interval_seconds
                     loop.next_run_at = _now() + timedelta(seconds=backoff)
-                db.commit()
+                _safe_commit(db)
                 changed = True
         finally:
             db.close()

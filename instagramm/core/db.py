@@ -9,12 +9,31 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    event,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from core.config import DB_PATH
 
-engine = create_engine(f"sqlite:///{DB_PATH.as_posix()}", connect_args={"check_same_thread": False})
+engine = create_engine(
+    f"sqlite:///{DB_PATH.as_posix()}",
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_pragmas(dbapi_conn, _rec):
+    """WAL + busy_timeout: permite leitura/gravação simultânea (UI + worker)
+    sem 'database is locked', evitando que o loop reposte vídeos por falha de commit."""
+    cur = dbapi_conn.cursor()
+    try:
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+    finally:
+        cur.close()
+
+
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
