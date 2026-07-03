@@ -18,15 +18,19 @@ class LoopView(BaseView):
         widgets.title(self, "Loop de publicação", size=24).pack(anchor="w")
         widgets.subtitle(self, "Publica os vídeos da lista em sequência (contínuo) ou em lotes (recorrente)").pack(anchor="w", pady=(0, 12))
 
+        # container rolável — garante que tudo apareça mesmo em telas pequenas
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.pack(fill="both", expand=True)
+
         self.running_card, self.running_body = widgets.section(
-            self,
+            scroll,
             "Contas rodando agora",
             "Loops, aquecimento e fila escalonada ativos",
             icon="▶",
         )
         self.running_card.pack(fill="x", pady=(0, 12))
 
-        top = widgets.card(self)
+        top = widgets.card(scroll)
         top.pack(fill="x")
         inner = ctk.CTkFrame(top, fg_color="transparent")
         inner.pack(fill="x", padx=20, pady=18)
@@ -92,8 +96,14 @@ class LoopView(BaseView):
         self.caption_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10, text_color=theme.TEXT)
         self.caption_box.grid(row=5, column=0, columnspan=2, sticky="ew")
 
+        # botões de vídeo (sempre visíveis, logo abaixo da legenda)
+        vbtns = ctk.CTkFrame(scroll, fg_color="transparent")
+        vbtns.pack(fill="x", pady=(12, 0))
+        widgets.primary_button(vbtns, "+ Adicionar vídeos", self._add_videos, height=40).pack(side="left")
+        widgets.ghost_button(vbtns, "Limpar lista", self._clear_videos, height=40).pack(side="left", padx=(8, 0))
+
         # status + controles
-        ctrl = ctk.CTkFrame(self, fg_color="transparent")
+        ctrl = ctk.CTkFrame(scroll, fg_color="transparent")
         ctrl.pack(fill="x", pady=12)
         self.status_label = ctk.CTkLabel(ctrl, text="Loop parado", font=(theme.FONT, 13, "bold"), text_color=theme.MUTED)
         self.status_label.pack(side="left")
@@ -105,14 +115,12 @@ class LoopView(BaseView):
         self.start_btn.pack(side="right")
 
         # lista de vídeos
-        listcard = widgets.card(self)
+        listcard = widgets.card(scroll)
         listcard.pack(fill="both", expand=True)
         lhead = ctk.CTkFrame(listcard, fg_color="transparent")
         lhead.pack(fill="x", padx=18, pady=(14, 6))
         widgets.title(lhead, "Vídeos do loop", size=15).pack(side="left")
-        widgets.ghost_button(lhead, "Limpar", self._clear_videos).pack(side="right", padx=6)
-        widgets.primary_button(lhead, "+ Adicionar vídeos", self._add_videos).pack(side="right")
-        self.videos_frame = ctk.CTkScrollableFrame(listcard, fg_color="transparent")
+        self.videos_frame = ctk.CTkScrollableFrame(listcard, fg_color="transparent", height=220)
         self.videos_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
     def on_show(self):
