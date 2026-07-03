@@ -500,19 +500,38 @@ def _story_media_kind(path: Path) -> str:
     raise InstagramError(f"Formato não suportado para Story: {ext or '(sem extensão)'}")
 
 
-def post_story(account, media_path: str, caption: str = "") -> dict[str, Any]:
-    """Publica foto ou vídeo como Story. Retorna {media_pk, code, settings, kind}."""
+def _normalize_link(link: str) -> str:
+    """Garante que o link tenha esquema http/https."""
+    link = (link or "").strip()
+    if not link:
+        return ""
+    if not link.lower().startswith(("http://", "https://")):
+        link = "https://" + link
+    return link
+
+
+def post_story(account, media_path: str, caption: str = "", link: str = "") -> dict[str, Any]:
+    """Publica foto ou vídeo como Story, com link opcional. Retorna {media_pk, code, settings, kind}."""
     media = Path(media_path)
     if not media.exists():
         raise InstagramError(f"Mídia não encontrada: {media_path}")
     kind = _story_media_kind(media)
+    link = _normalize_link(link)
+    story_links = []
+    if link:
+        from instagrapi.types import StoryLink
+
+        try:
+            story_links = [StoryLink(webUri=link)]
+        except Exception as exc:  # noqa: BLE001
+            raise InstagramError(f"Link inválido: {link}") from exc
     temp_thumb: Path | None = None
     try:
 
         def work(cl):
             nonlocal temp_thumb
             if kind == "photo":
-                return cl.photo_upload_to_story(media, caption or "")
+                return cl.photo_upload_to_story(media, caption or "", links=story_links)
             thumb = None
             from core.video_deps import make_video_thumbnail
 
@@ -521,7 +540,7 @@ def post_story(account, media_path: str, caption: str = "") -> dict[str, Any]:
                 thumb = temp_thumb
             except Exception:  # noqa: BLE001
                 thumb = None
-            return cl.video_upload_to_story(media, caption or "", thumbnail=thumb)
+            return cl.video_upload_to_story(media, caption or "", thumbnail=thumb, links=story_links)
 
         story, settings = _run_authed(account, work)
     except InstagramError:

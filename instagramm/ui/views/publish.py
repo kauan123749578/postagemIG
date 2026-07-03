@@ -57,6 +57,9 @@ class PublishView(BaseView):
         self.cover_label.pack(side="left", fill="x", expand=True)
         widgets.ghost_button(self.cover_row, "Escolher capa", self._pick_cover).pack(side="right")
 
+        self.link_field = widgets.field_label(inner, "Link do Story (opcional)")
+        self.link_entry = widgets.entry(inner, "https://seusite.com")
+
         self.caption_field = widgets.field_label(inner, "Legenda")
         self.caption_field.pack(anchor="w", pady=(0, 2))
         self.caption_box = ctk.CTkTextbox(inner, height=120, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
@@ -79,10 +82,14 @@ class PublishView(BaseView):
             self.pick_media_btn.configure(text="Escolher mídia")
             self.cover_field.pack_forget()
             self.cover_row.pack_forget()
+            self.link_field.pack(anchor="w", pady=(0, 2), before=self.caption_field)
+            self.link_entry.pack(fill="x", pady=(0, 12), before=self.caption_field)
             self.publish_btn.configure(text="📸  Publicar Story agora")
         else:
             self.media_label_field.configure(text="VÍDEO (.MP4)")
             self.pick_media_btn.configure(text="Escolher vídeo")
+            self.link_field.pack_forget()
+            self.link_entry.pack_forget()
             self.cover_field.pack(anchor="w", pady=(0, 2), before=self.caption_field)
             self.cover_row.pack(fill="x", pady=(0, 12), before=self.caption_field)
             self.publish_btn.configure(text="🚀  Publicar Reel agora")
@@ -137,9 +144,11 @@ class PublishView(BaseView):
         busy = "Publicando Story..." if self.mode == "story" else "Publicando Reel... (pode demorar)"
         self.publish_btn.configure(state="disabled", text=busy)
 
+        link = self.link_entry.get().strip() if self.mode == "story" else ""
+
         def task():
             if self.mode == "story":
-                return service.post_story_now(acc_id, self.media_path, caption)
+                return service.post_story_now(acc_id, self.media_path, caption, link)
             return service.post_reel_now(acc_id, self.media_path, caption, self.cover_path)
 
         def done(res):

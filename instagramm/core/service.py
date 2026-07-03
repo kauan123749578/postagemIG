@@ -477,7 +477,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             return {"ok": False, "message": str(exc), "kind": exc.kind}
 
 
-def post_story_now(account_id: int, media_path: str, caption: str = "") -> dict:
+def post_story_now(account_id: int, media_path: str, caption: str = "", link: str = "") -> dict:
     """Publica um Story (foto ou vídeo) imediatamente e registra no log."""
     with session_scope() as db:
         acc = db.get(Account, account_id)
@@ -485,7 +485,7 @@ def post_story_now(account_id: int, media_path: str, caption: str = "") -> dict:
             return {"ok": False, "message": "Conta não encontrada"}
         final_caption = caption or ""
         try:
-            result = ig.post_story(acc, media_path, final_caption)
+            result = ig.post_story(acc, media_path, final_caption, link)
             acc.session_json = json.dumps(result["settings"])
             acc.status = "healthy"
             acc.status_message = "Conectada"
@@ -501,7 +501,8 @@ def post_story_now(account_id: int, media_path: str, caption: str = "") -> dict:
             ))
             kind = "vídeo" if result.get("kind") == "video" else "foto"
             metrics.bump("post")
-            notify.log_event(f"Story publicado ({kind}) 📸", "success", acc.name)
+            link_txt = f" 🔗 {link}" if link else ""
+            notify.log_event(f"Story publicado ({kind}) 📸{link_txt}", "success", acc.name)
             return {"ok": True, "media_pk": result["media_pk"], "kind": result.get("kind", "")}
         except ig.InstagramError as exc:
             db.add(PostLog(
