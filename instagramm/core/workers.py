@@ -2,45 +2,21 @@
 
 Rodam numa thread separada para não travar a interface.
 """
-import json
+import logging
 import random
-import threading
 import time
 from datetime import datetime, timedelta, timezone
 
 from core import service
-from core.db import Account, LoopConfig, ScheduledPost, SessionLocal, StaggerItem, WarmConfig
+from core.db import Account, ScheduledPost, SessionLocal, StaggerItem, WarmConfig
 
 POLL_SECONDS = 5
-RATE_LIMIT_BACKOFF = 600  # 10 min após limite do Instagram
 
-# variação máxima do horário de postagem (para não parecer robô postando sempre no mesmo minuto)
-JITTER_MAX_SECONDS = 180  # ±3 min no máximo
-JITTER_FRACTION = 0.15    # ou ±15% do intervalo, o que for menor
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _jittered(base_seconds: float) -> float:
-    """Aplica uma variação aleatória ao intervalo para humanizar o horário do post."""
-    base = max(1.0, float(base_seconds))
-    spread = min(JITTER_MAX_SECONDS, base * JITTER_FRACTION)
-    offset = random.uniform(-spread, spread)
-    return max(15.0, base + offset)
-
-
-def _safe_commit(db) -> bool:
-    """Commita tentando de novo em caso de contenção do SQLite. Evita repost por commit perdido."""
-    for attempt in range(3):
-        try:
-            db.commit()
-            return True
-        except Exception:  # noqa: BLE001
-            db.rollback()
-            time.sleep(0.5 * (attempt + 1))
-    return False
 
 
 class WorkerManager:
@@ -76,93 +52,31 @@ class WorkerManager:
                 if changed:
                     self._notify()
             except Exception:  # noqa: BLE001
-                pass
+                logger.exception("Erro no worker de fundo")
             self._stop.wait(POLL_SECONDS)
 
     # ---- loops contínuos ----
     def _process_loops(self) -> bool:
         changed = False
-        db = SessionLocal()
-        try:
-            loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).all()
-            for loop in loops:
-                acc = db.get(Account, loop.account_id)
-                if not acc or not acc.is_active:
-                    continue
-                if loop.next_run_at and loop.next_run_at.tzinfo is None:
-                    loop.next_run_at = loop.next_run_at.replace(tzinfo=timezone.utc)
-                if loop.next_run_at and loop.next_run_at > _now():
-                    continue
-                videos = json.loads(loop.videos_json or "[]")
-                if not videos:
-                    loop.is_running = False
-                    loop.last_error = "Sem vídeos na lista"
-                    _safe_commit(db)
-                    changed = True
-                    continue
-
-                ok, reason = service.can_post(acc.id)
-                if not ok:
-                    loop.next_run_at = _now() + timedelta(seconds=_jittered(120))
-                    loop.last_error = reason
-                    _safe_commit(db)
-                    changed = True
-                    continue
-
-                recorrente = (loop.mode or "continuo") == "recorrente"
-                # início de um novo lote
-                if recorrente and (loop.batch_remaining or 0) <= 0:
-                    loop.batch_remaining = max(1, loop.batch_size or 1)
-
-                idx = loop.current_index % len(videos)
-                item = videos[idx]
-                result = service.post_reel_now(
-                    acc.id,
-                    item.get("video_path", ""),
-                    item.get("caption") or loop.caption,
-                    item.get("cover_path") or None,
-                )
-                if result.get("ok"):
-                    loop.total_posts += 1
-                    loop.last_error = ""
-                    if recorrente:
-                        # modo recorrente: percorre a lista em ciclo, em lotes
-                        loop.current_index = (loop.current_index + 1) % len(videos)
-                        loop.batch_remaining = max(0, (loop.batch_remaining or 1) - 1)
-                        if loop.batch_remaining > 0:
-                            # próximo vídeo do mesmo lote (com variação de tempo)
-                            loop.next_run_at = _now() + timedelta(seconds=_jittered(loop.interval_seconds))
-                        else:
-                            # lote concluído — espera o intervalo recorrente (com variação)
-                            base = (loop.batch_interval_minutes or 360) * 60
-                            loop.next_run_at = _now() + timedelta(seconds=_jittered(base))
-                    else:
-                        # modo contínuo: posta cada vídeo uma vez e para no fim
-                        next_index = loop.current_index + 1
-                        if next_index >= len(videos):
-                            loop.is_running = False
-                            loop.current_index = 0
-                            loop.next_run_at = None
-                            try:
-                                from core import notify
-                                notify.log_event(
-                                    f"Loop contínuo concluído: {len(videos)} vídeo(s) publicado(s). Parado automaticamente.",
-                                    level="success", account=acc.username,
-                                )
-                            except Exception:  # noqa: BLE001
-                                pass
-                        else:
-                            loop.current_index = next_index
-                            loop.next_run_at = _now() + timedelta(seconds=_jittered(loop.interval_seconds))
-                else:
-                    loop.last_error = result.get("message", "Erro")
-                    backoff = RATE_LIMIT_BACKOFF if result.get("kind") == "rate_limit" else loop.interval_seconds
-                    loop.next_run_at = _now() + timedelta(seconds=backoff)
-                _safe_commit(db)
+        for account_id in service.list_due_loop_account_ids():
+            if self._process_one_loop(account_id):
                 changed = True
-        finally:
-            db.close()
         return changed
+
+    def _process_one_loop(self, account_id: int) -> bool:
+        """Reserva slot → publica → confirma estado (uma conta por vez)."""
+        claim, touched = service.prepare_loop_post(account_id)
+        if not claim:
+            return touched
+
+        result = service.post_reel_now(
+            account_id,
+            claim["video_path"],
+            claim.get("caption") or "",
+            claim.get("cover_path") or None,
+        )
+        service.finalize_loop_post(account_id, claim, result)
+        return True
 
     # ---- agendamentos ----
     def _process_scheduled(self) -> bool:
@@ -221,8 +135,6 @@ class WorkerManager:
 
     # ---- aquecimento ----
     def _process_warming(self) -> bool:
-        import random
-
         changed = False
         db = SessionLocal()
         due_ids = []

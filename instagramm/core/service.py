@@ -4,7 +4,10 @@ Cada operação abre sua própria sessão de banco e devolve dados simples (dict
 para a interface não depender de objetos ORM presos a uma sessão.
 """
 import json
+import logging
 import shutil
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -21,6 +24,7 @@ from core.config import (
     VIDEOS_DIR,
 )
 from core.crypto import decrypt_secret, encrypt_secret
+from core.loop_timing import jitter_seconds
 from core.proxy import normalize_proxy_url
 from core.db import (
     Account,
@@ -37,13 +41,28 @@ from core.db import (
 _pending_2fa: dict[int, dict] = {}
 _pending_verify: dict[int, str] = {}
 
+# serializa leitura/gravação do estado do loop (UI + worker na mesma máquina)
+_loop_state_lock = threading.RLock()
+logger = logging.getLogger(__name__)
+
+RATE_LIMIT_BACKOFF = 600
+
 
 @contextmanager
 def session_scope():
     db = SessionLocal()
     try:
         yield db
-        db.commit()
+        for attempt in range(5):
+            try:
+                db.commit()
+                break
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                if "locked" in str(exc).lower() and attempt < 4:
+                    time.sleep(0.15 * (attempt + 1))
+                    continue
+                raise
     except Exception:
         db.rollback()
         raise
@@ -544,6 +563,156 @@ def recent_logs(limit: int = 50) -> list[dict]:
 
 # ---------------- Loop config ----------------
 
+def _loop_video_paths(videos_json: str) -> list[str]:
+    try:
+        return [str(v.get("video_path", "")) for v in json.loads(videos_json or "[]")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _canonical_videos_json(videos: list[dict]) -> str:
+    items = [
+        {
+            "video_path": str(v.get("video_path", "")),
+            "cover_path": str(v.get("cover_path", "") or ""),
+            "caption": str(v.get("caption", "") or ""),
+        }
+        for v in videos
+    ]
+    return json.dumps(items, sort_keys=True, ensure_ascii=False)
+
+
+def list_due_loop_account_ids() -> list[int]:
+    """Contas com loop rodando e horário de postagem vencido."""
+    now = datetime.now(timezone.utc)
+    with session_scope() as db:
+        rows = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).all()
+        due: list[int] = []
+        for loop in rows:
+            nxt = loop.next_run_at
+            if nxt and nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=timezone.utc)
+            if nxt and nxt > now:
+                continue
+            due.append(loop.account_id)
+        return due
+
+
+def prepare_loop_post(account_id: int) -> tuple[dict | None, bool]:
+    """Reserva o slot ANTES do upload. Retorna (claim, houve_alteração_no_banco)."""
+    now = datetime.now(timezone.utc)
+    with _loop_state_lock:
+        with session_scope() as db:
+            loop = db.query(LoopConfig).filter(
+                LoopConfig.account_id == account_id,
+                LoopConfig.is_running.is_(True),
+            ).first()
+            if not loop:
+                return None, False
+
+            nxt = loop.next_run_at
+            if nxt and nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=timezone.utc)
+            if nxt and nxt > now:
+                return None, False
+
+            videos = json.loads(loop.videos_json or "[]")
+            if not videos:
+                loop.is_running = False
+                loop.last_error = "Sem vídeos na lista"
+                return None, True
+
+            acc = db.get(Account, account_id)
+            if not acc or not acc.is_active:
+                return None, False
+
+            stats = usage_stats(db, account_id, acc.max_posts_per_day, acc.max_posts_per_hour)
+            if stats["blocked_hour"]:
+                loop.next_run_at = now + timedelta(seconds=jitter_seconds(120))
+                loop.last_error = "Limite por hora atingido"
+                return None, True
+            if stats["blocked_day"]:
+                loop.next_run_at = now + timedelta(seconds=jitter_seconds(120))
+                loop.last_error = "Limite diário atingido"
+                return None, True
+
+            recorrente = (loop.mode or "continuo") == "recorrente"
+            if recorrente and (loop.batch_remaining or 0) <= 0:
+                loop.batch_remaining = max(1, loop.batch_size or 1)
+
+            idx = loop.current_index % len(videos)
+            item = videos[idx]
+
+            hold = max(int(loop.interval_seconds or 120), 90)
+            loop.next_run_at = now + timedelta(seconds=hold)
+
+            claim = {
+                "account_id": account_id,
+                "idx": idx,
+                "video_path": item.get("video_path", ""),
+                "caption": item.get("caption") or loop.caption,
+                "cover_path": item.get("cover_path") or "",
+                "recorrente": recorrente,
+                "interval_seconds": loop.interval_seconds,
+                "batch_interval_minutes": loop.batch_interval_minutes,
+                "batch_remaining": loop.batch_remaining,
+                "video_count": len(videos),
+            }
+            return claim, True
+
+
+def finalize_loop_post(account_id: int, claim: dict, result: dict) -> bool:
+    """Atualiza índice e próximo horário depois do upload."""
+    now = datetime.now(timezone.utc)
+    with _loop_state_lock:
+        with session_scope() as db:
+            loop = db.query(LoopConfig).filter(
+                LoopConfig.account_id == account_id,
+                LoopConfig.is_running.is_(True),
+            ).first()
+            if not loop:
+                return True
+
+            acc = db.get(Account, account_id)
+            recorrente = claim["recorrente"]
+            idx = claim["idx"]
+            count = claim["video_count"]
+
+            if result.get("ok"):
+                loop.total_posts += 1
+                loop.last_error = ""
+                if recorrente:
+                    loop.current_index = (idx + 1) % count
+                    loop.batch_remaining = max(0, (claim["batch_remaining"] or 1) - 1)
+                    if loop.batch_remaining > 0:
+                        loop.next_run_at = now + timedelta(seconds=jitter_seconds(loop.interval_seconds))
+                    else:
+                        base = (loop.batch_interval_minutes or 360) * 60
+                        loop.next_run_at = now + timedelta(seconds=jitter_seconds(base))
+                else:
+                    next_index = idx + 1
+                    if next_index >= count:
+                        loop.is_running = False
+                        loop.current_index = 0
+                        loop.next_run_at = None
+                        try:
+                            notify.log_event(
+                                f"Loop contínuo concluído: {count} vídeo(s) publicado(s). Parado automaticamente.",
+                                level="success",
+                                account=acc.username if acc else "",
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                    else:
+                        loop.current_index = next_index
+                        loop.next_run_at = now + timedelta(seconds=jitter_seconds(loop.interval_seconds))
+            else:
+                loop.last_error = result.get("message", "Erro")
+                backoff = RATE_LIMIT_BACKOFF if result.get("kind") == "rate_limit" else loop.interval_seconds
+                loop.next_run_at = now + timedelta(seconds=max(30, int(backoff or 120)))
+            return True
+
+
 def get_loop(account_id: int) -> dict:
     with session_scope() as db:
         loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
@@ -577,39 +746,46 @@ def save_loop(
     batch_size: int = 3,
     batch_interval_minutes: int = 360,
 ) -> None:
-    with session_scope() as db:
-        loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
-        if not loop:
-            loop = LoopConfig(account_id=account_id)
-            db.add(loop)
-        new_videos = json.dumps(videos)
-        if loop.videos_json != new_videos:
-            loop.current_index = 0
-        loop.videos_json = new_videos
-        loop.interval_seconds = max(30, int(interval_seconds))
-        loop.caption = caption
-        loop.mode = mode if mode in ("continuo", "recorrente") else "continuo"
-        loop.batch_size = max(1, int(batch_size or 1))
-        loop.batch_interval_minutes = max(5, int(batch_interval_minutes or 5))
+    with _loop_state_lock:
+        with session_scope() as db:
+            loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+            if not loop:
+                loop = LoopConfig(account_id=account_id)
+                db.add(loop)
+            new_videos = _canonical_videos_json(videos)
+            old_paths = _loop_video_paths(loop.videos_json)
+            new_paths = _loop_video_paths(new_videos)
+            # só zera o índice se a lista de vídeos mudou (não por capa/legenda/ordem JSON)
+            if old_paths != new_paths:
+                loop.current_index = 0
+            elif loop.is_running and new_paths and loop.current_index >= len(new_paths):
+                loop.current_index = 0
+            loop.videos_json = new_videos
+            loop.interval_seconds = max(30, int(interval_seconds))
+            loop.caption = caption
+            loop.mode = mode if mode in ("continuo", "recorrente") else "continuo"
+            loop.batch_size = max(1, int(batch_size or 1))
+            loop.batch_interval_minutes = max(5, int(batch_interval_minutes or 5))
 
 
 def set_loop_running(account_id: int, running: bool) -> None:
-    with session_scope() as db:
-        loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
-        if not loop:
-            loop = LoopConfig(account_id=account_id)
-            db.add(loop)
-        loop.is_running = running
-        if running:
-            loop.next_run_at = datetime.now(timezone.utc)
-            loop.last_error = ""
-            loop.batch_remaining = 0
-            loop.current_index = 0
-        else:
-            loop.next_run_at = None
-        acc = db.get(Account, account_id)
-        name = acc.name if acc else ""
-        mode = loop.mode or "continuo"
+    with _loop_state_lock:
+        with session_scope() as db:
+            loop = db.query(LoopConfig).filter(LoopConfig.account_id == account_id).first()
+            if not loop:
+                loop = LoopConfig(account_id=account_id)
+                db.add(loop)
+            loop.is_running = running
+            if running:
+                loop.next_run_at = datetime.now(timezone.utc)
+                loop.last_error = ""
+                loop.batch_remaining = 0
+                loop.current_index = 0
+            else:
+                loop.next_run_at = None
+            acc = db.get(Account, account_id)
+            name = acc.name if acc else ""
+            mode = loop.mode or "continuo"
     label = "Loop recorrente" if mode == "recorrente" else "Loop contínuo"
     notify.log_event(label + (" iniciado" if running else " parado"), "info", name)
 
@@ -622,12 +798,13 @@ def count_running_loops() -> int:
 def stop_all_loops() -> int:
     """Para todos os loops ativos. Retorna quantos foram parados."""
     stopped = 0
-    with session_scope() as db:
-        loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).all()
-        for loop in loops:
-            loop.is_running = False
-            loop.next_run_at = None
-            stopped += 1
+    with _loop_state_lock:
+        with session_scope() as db:
+            loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).all()
+            for loop in loops:
+                loop.is_running = False
+                loop.next_run_at = None
+                stopped += 1
     if stopped:
         notify.log_event(f"{stopped} loop(s) parado(s)", "info")
     return stopped
