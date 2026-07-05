@@ -4,6 +4,7 @@ Rodam numa thread separada para não travar a interface.
 """
 import logging
 import random
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
