@@ -76,6 +76,30 @@ def setup() -> None:
     init_db()
 
 
+def resume_after_restart() -> dict:
+    """Chamado ao abrir o app: filas no SQLite continuam; redistribui atrasados."""
+    from core import automations as auto_svc
+
+    auto = auto_svc.reschedule_overdue_jobs_on_startup(gap_seconds=90)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with session_scope() as db:
+        sched_due = (
+            db.query(ScheduledPost)
+            .filter(ScheduledPost.status == "pending", ScheduledPost.scheduled_at <= now)
+            .count()
+        )
+        sched_pending = (
+            db.query(ScheduledPost)
+            .filter(ScheduledPost.status == "pending")
+            .count()
+        )
+    return {
+        **auto,
+        "scheduled_due": sched_due,
+        "scheduled_pending": sched_pending,
+    }
+
+
 def _export_session_file(username: str, settings: dict) -> None:
     """Salva a sessão em data/sessions/{username}.json e também session.json (última)."""
     try:
@@ -184,7 +208,16 @@ def create_account(
     default_caption: str = "",
     max_posts_per_day: int = 0,
     max_posts_per_hour: int = 0,
+    device_key: str = "",
 ) -> int:
+    from core.device import AUTO_DEVICE_KEY, DEVICE_BY_KEY
+
+    dkey = (device_key or "").strip()
+    if dkey in ("", AUTO_DEVICE_KEY):
+        dkey = ""
+    elif dkey not in DEVICE_BY_KEY:
+        dkey = ""
+
     with session_scope() as db:
         acc = Account(
             name=name.strip(),
@@ -193,6 +226,7 @@ def create_account(
             default_caption=default_caption[:INSTAGRAM_CAPTION_MAX],
             max_posts_per_day=max(0, int(max_posts_per_day or 0)),
             max_posts_per_hour=max(0, int(max_posts_per_hour or 0)),
+            device_key=dkey,
         )
         if password:
             acc.password_enc = encrypt_secret(password)
@@ -236,10 +270,32 @@ def delete_account(account_id: int) -> None:
 
 def save_account_settings(account_id: int, **fields) -> dict:
     """Salva proxy, limites e dados da conta sem tentar reconectar."""
+    from core.device import AUTO_DEVICE_KEY, DEVICE_BY_KEY
+
     if "password" in fields and not fields["password"]:
         fields.pop("password")
     if "sessionid" in fields and not fields["sessionid"]:
         fields.pop("sessionid")
+    if "device_key" in fields:
+        dkey = (fields.get("device_key") or "").strip()
+        if dkey in ("", AUTO_DEVICE_KEY):
+            # automático: só limpa se a conta ainda não tem sessão (login novo)
+            with session_scope() as db:
+                acc = db.get(Account, account_id)
+                if acc and (acc.session_json or (getattr(acc, "device_key", "") or "").strip()):
+                    fields.pop("device_key", None)
+                else:
+                    fields["device_key"] = ""
+        elif dkey not in DEVICE_BY_KEY:
+            fields.pop("device_key", None)
+        else:
+            # não troca modelo de conta já conectada com sessão
+            with session_scope() as db:
+                acc = db.get(Account, account_id)
+                if acc and acc.session_json and (getattr(acc, "device_key", "") or "").strip():
+                    fields.pop("device_key", None)
+                else:
+                    fields["device_key"] = dkey
     update_account(account_id, **fields)
     return {"ok": True, "message": "Dados da conta salvos (proxy, sessionid, limites, etc.)"}
 

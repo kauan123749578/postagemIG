@@ -130,6 +130,24 @@ DEVICE_BY_KEY = {d["key"]: d for d in DEVICE_POOL}
 SAMSUNG_DEVICE = {k: v for k, v in DEVICE_BY_KEY["samsung_m04"].items() if k not in ("key", "label", "user_agent")}
 SAMSUNG_USER_AGENT = DEVICE_BY_KEY["samsung_m04"]["user_agent"]
 
+AUTO_DEVICE_KEY = "auto"
+AUTO_DEVICE_LABEL = "Automático (próximo livre do pool)"
+
+
+def list_device_choices() -> list[tuple[str, str]]:
+    """Opções para o dropdown da UI: (key, label)."""
+    items = [(AUTO_DEVICE_KEY, AUTO_DEVICE_LABEL)]
+    items.extend((d["key"], d["label"]) for d in DEVICE_POOL)
+    return items
+
+
+def label_for_device_key(key: str | None) -> str:
+    if not key or key == AUTO_DEVICE_KEY:
+        return AUTO_DEVICE_LABEL
+    if key in DEVICE_BY_KEY:
+        return DEVICE_BY_KEY[key]["label"]
+    return key
+
 
 def get_device_profile(key: str | None) -> dict[str, Any]:
     if key and key in DEVICE_BY_KEY:

@@ -4,6 +4,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from core import service
+from core.device import AUTO_DEVICE_KEY, AUTO_DEVICE_LABEL, list_device_choices
 from ui import theme, widgets
 from ui.dialogs import TwoFactorDialog, confirm
 from ui.views.base import BaseView
@@ -13,6 +14,11 @@ class AccountsView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
         self.edit_id: int | None = None
+        self._device_locked = False
+        self._device_choices = list_device_choices()
+        self._device_labels = [label for _key, label in self._device_choices]
+        self._label_to_key = {label: key for key, label in self._device_choices}
+        self._key_to_label = {key: label for key, label in self._device_choices}
         self.grid_columnconfigure(0, weight=0, minsize=380)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -44,6 +50,28 @@ class AccountsView(BaseView):
         self.fields["proxy_url"] = self._add_field(inner, "Proxy (opcional)", "ip:porta:usuario:senha")
         widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: 185.72.240.96:7132:usuario:senha  ·  http://usuario:senha@ip:porta  ·  socks5://usuario:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 8))
 
+        widgets.field_label(inner, "Modelo do celular (fingerprint)").pack(anchor="w", pady=(8, 2))
+        self.device_menu = ctk.CTkOptionMenu(
+            inner,
+            values=self._device_labels,
+            fg_color=theme.CARD2,
+            button_color=theme.PRIMARY,
+            button_hover_color=theme.PRIMARY,
+            dropdown_fg_color=theme.CARD2,
+            dropdown_hover_color=theme.PRIMARY_SOFT,
+            text_color=theme.TEXT,
+            font=(theme.FONT, 12),
+            height=36,
+            corner_radius=10,
+        )
+        self.device_menu.set(AUTO_DEVICE_LABEL)
+        self.device_menu.pack(fill="x")
+        self.device_hint = widgets.subtitle(
+            inner,
+            "Escolha o aparelho que o Meta vai ver no login. Contas já conectadas mantêm o modelo.",
+        )
+        self.device_hint.pack(anchor="w", pady=(2, 8))
+
         self.connect_btn = widgets.primary_button(inner, "🔗  Conectar conta", self._save_and_connect)
         self.connect_btn.pack(fill="x", pady=(10, 6))
         self.save_only_btn = widgets.ghost_button(inner, "💾  Salvar proxy e dados (sem conectar)", self._save_settings_only)
@@ -59,6 +87,30 @@ class AccountsView(BaseView):
         e = widgets.entry(master, placeholder, show=show)
         e.pack(fill="x")
         return e
+
+    def _selected_device_key(self) -> str:
+        label = self.device_menu.get()
+        return self._label_to_key.get(label, AUTO_DEVICE_KEY)
+
+    def _set_device_locked(self, locked: bool, label: str | None = None):
+        self._device_locked = locked
+        if label:
+            self.device_menu.set(label)
+        state = "disabled" if locked else "normal"
+        try:
+            self.device_menu.configure(state=state)
+        except Exception:  # noqa: BLE001
+            pass
+        if locked:
+            self.device_hint.configure(
+                text="Modelo já atribuído nesta conta — não troca com sessão salva.",
+                text_color=theme.PRIMARY,
+            )
+        else:
+            self.device_hint.configure(
+                text="Escolha o aparelho que o Meta vai ver no login. Contas já conectadas mantêm o modelo.",
+                text_color=theme.MUTED,
+            )
 
     # ---------- lista ----------
     def _build_list(self):
@@ -156,6 +208,7 @@ class AccountsView(BaseView):
             "username": self.fields["username"].get().strip(),
             "password": self.fields["password"].get().strip(),
             "proxy_url": self.fields["proxy_url"].get().strip(),
+            "device_key": self._selected_device_key(),
         }
 
     def _save_settings_only(self):
@@ -169,13 +222,15 @@ class AccountsView(BaseView):
             return
 
         def task():
-            service.save_account_settings(
-                self.edit_id,
-                name=data["name"],
-                username=data["username"],
-                password=data["password"] or None,
-                proxy_url=data["proxy_url"],
-            )
+            payload = {
+                "name": data["name"],
+                "username": data["username"],
+                "password": data["password"] or None,
+                "proxy_url": data["proxy_url"],
+            }
+            if not self._device_locked:
+                payload["device_key"] = data["device_key"]
+            service.save_account_settings(self.edit_id, **payload)
 
         def done(_r):
             self.app.toast("Proxy e dados salvos com sucesso", "success")
@@ -199,14 +254,19 @@ class AccountsView(BaseView):
                 acc_id = service.create_account(
                     name=data["name"], username=data["username"], password=data["password"],
                     proxy_url=data["proxy_url"],
+                    device_key=data["device_key"],
                 )
             else:
                 acc_id = self.edit_id
-                service.save_account_settings(
-                    acc_id, name=data["name"], username=data["username"],
-                    password=data["password"] or None,
-                    proxy_url=data["proxy_url"],
-                )
+                payload = {
+                    "name": data["name"],
+                    "username": data["username"],
+                    "password": data["password"] or None,
+                    "proxy_url": data["proxy_url"],
+                }
+                if not self._device_locked:
+                    payload["device_key"] = data["device_key"]
+                service.save_account_settings(acc_id, **payload)
             res = service.connect_account(acc_id, password=data["password"] or None)
             return acc_id, data["username"], res, data["proxy_url"]
 
@@ -323,6 +383,12 @@ class AccountsView(BaseView):
                 text_color=theme.MUTED,
             )
         self.fields["proxy_url"].delete(0, "end"); self.fields["proxy_url"].insert(0, acc["proxy_url"] or "")
+        dkey = (acc.get("device_key") or "").strip()
+        locked = bool(acc.get("has_session") and dkey)
+        label = self._key_to_label.get(dkey) or (acc.get("device_label") or AUTO_DEVICE_LABEL)
+        if dkey and label not in self._device_labels:
+            self.device_menu.configure(values=self._device_labels + [label])
+        self._set_device_locked(locked, label if dkey else AUTO_DEVICE_LABEL)
         self.connect_btn.configure(text="💾  Salvar e reconectar")
 
     def _delete(self, acc):
@@ -357,4 +423,6 @@ class AccountsView(BaseView):
         for _key, e in self.fields.items():
             e.delete(0, "end")
         self.password_hint.configure(text="A senha fica salva criptografada no seu computador", text_color=theme.MUTED)
+        self.device_menu.configure(values=self._device_labels)
+        self._set_device_locked(False, AUTO_DEVICE_LABEL)
         self.connect_btn.configure(text="🔗  Conectar conta")

@@ -280,6 +280,70 @@ def list_due_automation_job_ids(limit: int = 5) -> list[int]:
         db.close()
 
 
+def reschedule_overdue_jobs_on_startup(*, gap_seconds: int = 90) -> dict:
+    """Ao reabrir o app: jobs atrasados (PC off) são redistribuídos a partir de agora.
+
+    Mantém automações active e a fila pending — só evita rajada de posts de uma vez.
+    """
+    now = _now()
+    gap = max(30, int(gap_seconds))
+    with svc.session_scope() as db:
+        overdue = (
+            db.query(AutomationJob)
+            .join(Automation, Automation.id == AutomationJob.automation_id)
+            .filter(
+                Automation.status == "active",
+                AutomationJob.status == "pending",
+                AutomationJob.scheduled_at < now,
+            )
+            .order_by(AutomationJob.scheduled_at, AutomationJob.id)
+            .all()
+        )
+        if not overdue:
+            pending_future = (
+                db.query(AutomationJob)
+                .join(Automation, Automation.id == AutomationJob.automation_id)
+                .filter(
+                    Automation.status == "active",
+                    AutomationJob.status == "pending",
+                    AutomationJob.scheduled_at >= now,
+                )
+                .count()
+            )
+            active = db.query(Automation).filter(Automation.status == "active").count()
+            return {
+                "overdue_rescheduled": 0,
+                "pending_future": pending_future,
+                "automations_active": active,
+            }
+
+        cursor = now
+        for job in overdue:
+            job.scheduled_at = cursor
+            cursor = cursor + timedelta(seconds=gap)
+
+        active = db.query(Automation).filter(Automation.status == "active").count()
+        pending_future = (
+            db.query(AutomationJob)
+            .join(Automation, Automation.id == AutomationJob.automation_id)
+            .filter(
+                Automation.status == "active",
+                AutomationJob.status == "pending",
+            )
+            .count()
+        )
+        notify.log_event(
+            f"Retomada: {len(overdue)} post(s) atrasado(s) redistribuído(s) "
+            f"(~{gap}s entre cada) · {active} automação(ões) ativa(s)",
+            "info",
+        )
+        return {
+            "overdue_rescheduled": len(overdue),
+            "pending_future": pending_future,
+            "automations_active": active,
+        }
+
+
 def process_automation_job(job_id: int) -> bool:
     """Publica um job due. Retorna True se processou."""
     account_id = 0

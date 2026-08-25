@@ -12,7 +12,6 @@ from ui.views.accounts import AccountsView
 from ui.views.automations import AutomationsView
 from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
-from ui.views.media import MediaView
 from ui.views.publish import PublishView
 from ui.views.settings import SettingsView
 from ui.views.stories import StoriesView
@@ -23,7 +22,6 @@ NAV = [
     ("automations", "  ⚡  Automações"),
     ("stories", "  📸  Stories"),
     ("publish", "  🚀  Publicar"),
-    ("media", "  🎬  Mídia"),
     ("logs", "  📜  Logs"),
     ("settings", "  ⚙️  Configurações"),
 ]
@@ -34,7 +32,6 @@ VIEW_CLASSES = {
     "automations": AutomationsView,
     "stories": StoriesView,
     "publish": PublishView,
-    "media": MediaView,
     "logs": LogsView,
     "settings": SettingsView,
 }
@@ -69,7 +66,32 @@ class App(ctk.CTk):
 
         self.show_view("dashboard")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(400, self._resume_queues_on_start)
         self.after(1500, self._check_sessions_on_start)
+
+    def _resume_queues_on_start(self):
+        """Filas ficam no SQLite: ao reabrir, redistribui atrasados e avisa."""
+
+        def task():
+            return service.resume_after_restart()
+
+        def done(info):
+            overdue = int(info.get("overdue_rescheduled") or 0)
+            pending = int(info.get("pending_future") or 0)
+            autos = int(info.get("automations_active") or 0)
+            sched = int(info.get("scheduled_pending") or 0)
+            if overdue:
+                self.toast(
+                    f"Retomando fila: {overdue} atrasado(s) · {pending} na fila · {autos} automação(ões)",
+                    "info",
+                )
+            elif pending or sched:
+                self.toast(
+                    f"Filas ativas: {pending} automação · {sched} agendamento(s) · worker ligado",
+                    "info",
+                )
+
+        self.run_async(task, on_done=done)
 
     def alert_session_expired(self, account_name: str):
         self.toast(f"⚠️ Sessão de {account_name} expirou — reconecte em Contas", "error")
