@@ -1,15 +1,15 @@
-"""Workers de fundo: loop contínuo e agendamentos.
+"""Workers de fundo: automações Instablack + agendamentos manuais.
 
 Rodam numa thread separada para não travar a interface.
+Loop/aquecimento/escalonada antigos foram desativados.
 """
 import logging
-import random
 import threading
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
+from core import automations as auto_svc
 from core import service
-from core.db import Account, ScheduledPost, SessionLocal, StaggerItem, WarmConfig
+from core.db import ScheduledPost, SessionLocal
 
 POLL_SECONDS = 5
 
@@ -24,7 +24,7 @@ class WorkerManager:
     def __init__(self, on_change=None):
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self.on_change = on_change  # callback para a UI atualizar
+        self.on_change = on_change
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -46,41 +46,23 @@ class WorkerManager:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                changed = self._process_stagger()
-                changed = self._process_loops() or changed
+                changed = self._process_automations()
                 changed = self._process_scheduled() or changed
-                changed = self._process_warming() or changed
                 if changed:
                     self._notify()
             except Exception:  # noqa: BLE001
                 logger.exception("Erro no worker de fundo")
             self._stop.wait(POLL_SECONDS)
 
-    # ---- loops contínuos ----
-    def _process_loops(self) -> bool:
+    def _process_automations(self) -> bool:
         changed = False
-        for account_id in service.list_due_loop_account_ids():
-            if self._process_one_loop(account_id):
+        for job_id in auto_svc.list_due_automation_job_ids(limit=3):
+            if auto_svc.process_automation_job(job_id):
                 changed = True
         return changed
 
-    def _process_one_loop(self, account_id: int) -> bool:
-        """Reserva slot → publica → confirma estado (uma conta por vez)."""
-        claim, touched = service.prepare_loop_post(account_id)
-        if not claim:
-            return touched
-
-        result = service.post_reel_now(
-            account_id,
-            claim["video_path"],
-            claim.get("caption") or "",
-            claim.get("cover_path") or None,
-        )
-        service.finalize_loop_post(account_id, claim, result)
-        return True
-
-    # ---- agendamentos ----
     def _process_scheduled(self) -> bool:
+        """Agendamentos manuais (tela Agendamentos) — mantidos."""
         changed = False
         db = SessionLocal()
         try:
@@ -96,10 +78,12 @@ class WorkerManager:
                     sched = sched.replace(tzinfo=timezone.utc)
                 if sched and sched > _now():
                     continue
-                ok, reason = service.can_post(post.account_id)
+                ok, _reason = service.can_post(post.account_id)
                 if not ok:
-                    continue  # tenta de novo no próximo ciclo
-                result = service.post_reel_now(post.account_id, post.video_path, post.caption, post.cover_path or None)
+                    continue
+                result = service.post_reel_now(
+                    post.account_id, post.video_path, post.caption, post.cover_path or None
+                )
                 if result.get("ok"):
                     post.status = "posted"
                 else:
@@ -109,68 +93,4 @@ class WorkerManager:
                 changed = True
         finally:
             db.close()
-        return changed
-
-    # ---- fila escalonada ----
-    def _process_stagger(self) -> bool:
-        account_ids = []
-        db = SessionLocal()
-        try:
-            items = db.query(StaggerItem).filter(StaggerItem.status == "pending").all()
-            for it in items:
-                act = it.activate_at
-                if act and act.tzinfo is None:
-                    act = act.replace(tzinfo=timezone.utc)
-                if act and act > _now():
-                    continue
-                it.status = "activated"
-                account_ids.append(it.account_id)
-            if account_ids:
-                db.commit()
-        finally:
-            db.close()
-
-        for acc_id in account_ids:
-            service.set_loop_running(acc_id, True)
-        return bool(account_ids)
-
-    # ---- aquecimento ----
-    def _process_warming(self) -> bool:
-        changed = False
-        db = SessionLocal()
-        due_ids = []
-        try:
-            warms = db.query(WarmConfig).filter(WarmConfig.is_running.is_(True)).all()
-            for w in warms:
-                acc = db.get(Account, w.account_id)
-                if not acc or not acc.is_active or acc.status != "healthy":
-                    continue
-                # respeita a janela de horário (pausa automática fora dela)
-                start = w.active_start_hour if w.active_start_hour is not None else 8
-                end = w.active_end_hour if w.active_end_hour is not None else 23
-                if not service.within_active_window(start, end):
-                    continue
-                nxt = w.next_run_at
-                if nxt and nxt.tzinfo is None:
-                    nxt = nxt.replace(tzinfo=timezone.utc)
-                if nxt and nxt > _now():
-                    continue
-                due_ids.append((w.account_id, w.interval_minutes))
-        finally:
-            db.close()
-
-        for account_id, interval in due_ids:
-            service.run_warm_once(account_id)
-            # agenda o próximo com variação de ±30%
-            jitter = random.uniform(0.7, 1.3)
-            nxt = _now() + timedelta(minutes=max(5, interval) * jitter)
-            db = SessionLocal()
-            try:
-                w = db.query(WarmConfig).filter(WarmConfig.account_id == account_id).first()
-                if w and w.is_running:
-                    w.next_run_at = nxt
-                    db.commit()
-            finally:
-                db.close()
-            changed = True
         return changed

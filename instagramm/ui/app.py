@@ -9,23 +9,19 @@ from core.config import APP_NAME, APP_VERSION
 from core.workers import WorkerManager
 from ui import theme
 from ui.views.accounts import AccountsView
+from ui.views.automations import AutomationsView
 from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
-from ui.views.loop import LoopView
 from ui.views.media import MediaView
 from ui.views.publish import PublishView
 from ui.views.schedule import ScheduleView
 from ui.views.settings import SettingsView
-from ui.views.stagger import StaggerView
-from ui.views.warm import WarmView
 
 NAV = [
     ("dashboard", "  📊  Dashboard"),
     ("accounts", "  👤  Contas"),
+    ("automations", "  ⚡  Automações"),
     ("publish", "  🚀  Publicar"),
-    ("loop", "  🔁  Loop (contínuo/recorrente)"),
-    ("stagger", "  ⚡  Fila escalonada"),
-    ("warm", "  🔥  Aquecer contas"),
     ("schedule", "  ⏰  Agendamentos"),
     ("media", "  🎬  Mídia"),
     ("logs", "  📜  Logs"),
@@ -35,10 +31,8 @@ NAV = [
 VIEW_CLASSES = {
     "dashboard": DashboardView,
     "accounts": AccountsView,
+    "automations": AutomationsView,
     "publish": PublishView,
-    "loop": LoopView,
-    "stagger": StaggerView,
-    "warm": WarmView,
     "schedule": ScheduleView,
     "media": MediaView,
     "logs": LogsView,
@@ -146,7 +140,7 @@ class App(ctk.CTk):
             self._nav_buttons[key] = btn
             self._nav_accents[key] = accent
 
-        footer = ctk.CTkLabel(sidebar, text=f"Postagem IG  ·  v{APP_VERSION}", font=(theme.FONT, 10),
+        footer = ctk.CTkLabel(sidebar, text=f"Instablack Local  ·  v{APP_VERSION}", font=(theme.FONT, 10),
                               text_color=theme.MUTED)
         footer.pack(side="bottom", pady=(8, 14))
 

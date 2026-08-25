@@ -6,8 +6,8 @@ Quando empacotado com PyInstaller, usa a pasta do executável.
 import sys
 from pathlib import Path
 
-APP_NAME = "Postagem IG"
-APP_VERSION = "1.0.0"
+APP_NAME = "Instablack Local"
+APP_VERSION = "2.0.0"
 
 
 def _base_dir() -> Path:

@@ -183,6 +183,56 @@ class DailyMetric(Base):
     value: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Automation(Base):
+    """Automação global estilo Instablack: 1 legenda + N vídeos + 1 capa + N contas."""
+    __tablename__ = "automations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(160), default="")
+    content_type: Mapped[str] = mapped_column(String(20), default="reel")
+    caption: Mapped[str] = mapped_column(Text, default="")
+    cover_path: Mapped[str] = mapped_column(Text, default="")
+    videos_json: Mapped[str] = mapped_column(Text, default="[]")
+    account_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=10)
+    stagger_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    stagger_min_minutes: Mapped[int] = mapped_column(Integer, default=2)
+    stagger_max_minutes: Mapped[int] = mapped_column(Integer, default=8)
+    # draft | paused | active | done | error
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    total_posts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    jobs: Mapped[list["AutomationJob"]] = relationship(
+        back_populates="automation", cascade="all, delete-orphan"
+    )
+
+
+class AutomationJob(Base):
+    """Post individual agendado dentro de uma automação (conta x vídeo)."""
+    __tablename__ = "automation_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    automation_id: Mapped[int] = mapped_column(ForeignKey("automations.id"), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    video_path: Mapped[str] = mapped_column(Text, default="")
+    cover_path: Mapped[str] = mapped_column(Text, default="")
+    caption: Mapped[str] = mapped_column(Text, default="")
+    video_index: Mapped[int] = mapped_column(Integer, default=0)
+    account_index: Mapped[int] = mapped_column(Integer, default=0)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    # pending | posted | error | skipped | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    media_id: Mapped[str] = mapped_column(String(64), default="")
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    automation: Mapped["Automation"] = relationship(back_populates="jobs")
+
+
 def _ensure_columns() -> None:
     """Migração leve para SQLite: adiciona colunas novas em tabelas já existentes."""
     from sqlalchemy import inspect, text

@@ -28,6 +28,8 @@ from core.loop_timing import jitter_seconds
 from core.proxy import normalize_proxy_url
 from core.db import (
     Account,
+    Automation,
+    AutomationJob,
     LoopConfig,
     PostLog,
     ScheduledPost,
@@ -866,23 +868,62 @@ def dashboard_stats() -> dict:
     with session_scope() as db:
         total = db.query(Account).count()
         connected = db.query(Account).filter(Account.status == "healthy").count()
-        loops = db.query(LoopConfig).filter(LoopConfig.is_running.is_(True)).count()
-        warming = db.query(WarmConfig).filter(WarmConfig.is_running.is_(True)).count()
+        autos = db.query(Automation).filter(Automation.status == "active").count()
+        jobs_pending = db.query(AutomationJob).filter(AutomationJob.status == "pending").count()
         day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         posts_today = db.query(PostLog).filter(PostLog.status == "success", PostLog.posted_at >= day_ago).count()
         pending = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
         return {
             "accounts": total,
             "connected": connected,
-            "loops_running": loops,
-            "warming": warming,
+            "automations_active": autos,
+            "jobs_pending": jobs_pending,
             "posts_24h": posts_today,
             "scheduled_pending": pending,
+            # legado (compat)
+            "loops_running": autos,
+            "warming": jobs_pending,
         }
 
 
 def list_running_tasks() -> list[dict]:
-    """Lista automações ativas (loops, aquecimento, fila escalonada)."""
+    """Lista automações ativas (Instablack local)."""
+    items: list[dict] = []
+    with session_scope() as db:
+        autos = (
+            db.query(Automation)
+            .filter(Automation.status == "active")
+            .order_by(Automation.id.desc())
+            .all()
+        )
+        for a in autos:
+            pending = db.query(AutomationJob).filter(
+                AutomationJob.automation_id == a.id,
+                AutomationJob.status == "pending",
+            ).count()
+            posted = db.query(AutomationJob).filter(
+                AutomationJob.automation_id == a.id,
+                AutomationJob.status == "posted",
+            ).count()
+            detail = f"{posted} ok · {pending} na fila"
+            if a.last_error:
+                detail = (a.last_error or "")[:80]
+            items.append({
+                "type": "automation",
+                "automation_id": a.id,
+                "account_id": None,
+                "name": a.name,
+                "username": "",
+                "title": a.name or f"Automação #{a.id}",
+                "activity": f"Reels a cada {a.interval_minutes} min",
+                "detail": detail,
+                "icon": "⚡",
+            })
+    return items
+
+
+def list_running_tasks_legacy() -> list[dict]:
+    """Legado: loops/warm/stagger — mantido só se precisar depurar."""
     items: list[dict] = []
     with session_scope() as db:
         loops = (

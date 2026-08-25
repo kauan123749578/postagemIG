@@ -146,10 +146,11 @@ def render_running_tasks(container, tasks, *, empty_text="Nenhuma automação ro
             text_frame, text=sub, font=(theme.FONT, 11),
             text_color=theme.SUCCESS, anchor="w",
         ).pack(anchor="w")
-        if on_stop is not None and task.get("type") == "loop":
-            acc_id = task.get("account_id")
+        if on_stop is not None and task.get("type") in ("loop", "automation"):
+            stop_id = task.get("automation_id") if task.get("type") == "automation" else task.get("account_id")
             danger_button(
-                row, "⏹ Parar", lambda i=acc_id: on_stop(i), height=32, width=90,
+                row, "⏹ Pausar" if task.get("type") == "automation" else "⏹ Parar",
+                lambda i=stop_id: on_stop(i), height=32, width=90,
             ).pack(side="right", padx=(6, 12), pady=10)
         chip(row, "RODANDO", color=theme.SUCCESS, soft=theme.SUCCESS_SOFT).pack(
             side="right", padx=(12, 6), pady=10,
