@@ -54,6 +54,8 @@ class Account(Base):
     username: Mapped[str] = mapped_column(String(120), default="")
     password_enc: Mapped[str] = mapped_column(Text, default="")
     sessionid_enc: Mapped[str] = mapped_column(Text, default="")
+    # secret base32 do autenticador (Google Auth) — criptografado
+    totp_secret_enc: Mapped[str] = mapped_column(Text, default="")
     session_json: Mapped[str] = mapped_column(Text, default="")
     proxy_url: Mapped[str] = mapped_column(String(512), default="")
     default_caption: Mapped[str] = mapped_column(Text, default="")
@@ -266,6 +268,7 @@ def _ensure_columns() -> None:
         },
         "accounts": {
             "sessionid_enc": "TEXT DEFAULT ''",
+            "totp_secret_enc": "TEXT DEFAULT ''",
             "device_key": "VARCHAR(64) DEFAULT ''",
         },
         "scheduled_posts": {

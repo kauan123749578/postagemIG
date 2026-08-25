@@ -47,6 +47,17 @@ class AccountsView(BaseView):
         self.fields["password"] = self._add_field(inner, "Senha", "senha da conta", show="•")
         self.password_hint = widgets.subtitle(inner, "A senha fica salva criptografada no seu computador")
         self.password_hint.pack(anchor="w", pady=(2, 0))
+        self.fields["totp_secret"] = self._add_field(
+            inner,
+            "Secret do autenticador (2FA — opcional)",
+            "Ex.: YZYHDNT7HG7F2BQ7IC2J4TCKW2HE2YNE",
+            show="•",
+        )
+        self.totp_hint = widgets.subtitle(
+            inner,
+            "Cole o secret base32 do Google Authenticator — o app gera o código sozinho no login",
+        )
+        self.totp_hint.pack(anchor="w", pady=(2, 8))
         self.fields["proxy_url"] = self._add_field(inner, "Proxy (opcional)", "ip:porta:usuario:senha")
         widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: 185.72.240.96:7132:usuario:senha  ·  http://usuario:senha@ip:porta  ·  socks5://usuario:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 8))
 
@@ -175,6 +186,8 @@ class AccountsView(BaseView):
         meta = f"📊 {usage['posts_last_24h']} posts/24h"
         meta += "    " + ("🛡 Proxy" if acc["proxy_url"] else "○ Sem proxy")
         meta += "    " + ("🔑 Senha salva" if acc.get("has_password") else "○ Sem senha")
+        if acc.get("has_totp"):
+            meta += "    🔐 2FA auto"
         ctk.CTkLabel(info, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w", pady=(4, 0))
         if acc.get("device_label"):
             ctk.CTkLabel(
@@ -280,6 +293,7 @@ class AccountsView(BaseView):
             "name": self.fields["name"].get().strip(),
             "username": self.fields["username"].get().strip(),
             "password": self.fields["password"].get().strip(),
+            "totp_secret": self.fields["totp_secret"].get().strip(),
             "proxy_url": self.fields["proxy_url"].get().strip(),
             "device_key": self._selected_device_key(),
         }
@@ -299,6 +313,7 @@ class AccountsView(BaseView):
                 "name": data["name"],
                 "username": data["username"],
                 "password": data["password"] or None,
+                "totp_secret": data["totp_secret"] or None,
                 "proxy_url": data["proxy_url"],
             }
             if not self._device_locked:
@@ -319,6 +334,12 @@ class AccountsView(BaseView):
         if self.edit_id is None and not data["password"]:
             self.app.toast("Informe a senha da conta", "error")
             return
+        if data["totp_secret"]:
+            from core.totp import totp_secret_valid
+
+            if not totp_secret_valid(data["totp_secret"]):
+                self.app.toast("Secret do autenticador inválido (base32, tipo YZYH...)", "error")
+                return
 
         self.connect_btn.configure(state="disabled", text="Conectando...")
 
@@ -328,6 +349,7 @@ class AccountsView(BaseView):
                     name=data["name"], username=data["username"], password=data["password"],
                     proxy_url=data["proxy_url"],
                     device_key=data["device_key"],
+                    totp_secret=data["totp_secret"],
                 )
             else:
                 acc_id = self.edit_id
@@ -335,6 +357,7 @@ class AccountsView(BaseView):
                     "name": data["name"],
                     "username": data["username"],
                     "password": data["password"] or None,
+                    "totp_secret": data["totp_secret"] or None,
                     "proxy_url": data["proxy_url"],
                 }
                 if not self._device_locked:
@@ -462,6 +485,17 @@ class AccountsView(BaseView):
                 text="Digite a senha para salvar e reconectar quando a sessão expirar",
                 text_color=theme.MUTED,
             )
+        self.fields["totp_secret"].delete(0, "end")
+        if acc.get("has_totp"):
+            self.totp_hint.configure(
+                text="✓ Secret 2FA já salvo — deixe em branco para manter ou cole um novo",
+                text_color=theme.SUCCESS,
+            )
+        else:
+            self.totp_hint.configure(
+                text="Cole o secret base32 do Google Authenticator — o app gera o código sozinho no login",
+                text_color=theme.MUTED,
+            )
         self.fields["proxy_url"].delete(0, "end"); self.fields["proxy_url"].insert(0, acc["proxy_url"] or "")
         dkey = (acc.get("device_key") or "").strip()
         locked = bool(acc.get("has_session") and dkey)
@@ -503,6 +537,10 @@ class AccountsView(BaseView):
         for _key, e in self.fields.items():
             e.delete(0, "end")
         self.password_hint.configure(text="A senha fica salva criptografada no seu computador", text_color=theme.MUTED)
+        self.totp_hint.configure(
+            text="Cole o secret base32 do Google Authenticator — o app gera o código sozinho no login",
+            text_color=theme.MUTED,
+        )
         self.device_menu.configure(values=self._device_labels)
         self._set_device_locked(False, AUTO_DEVICE_LABEL)
         self.connect_btn.configure(text="🔗  Conectar conta")

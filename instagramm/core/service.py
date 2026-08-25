@@ -215,6 +215,7 @@ def _account_dict(acc: Account, db) -> dict:
         "has_session": bool(acc.session_json),
         "has_password": bool(acc.password_enc),
         "has_sessionid": bool(getattr(acc, "sessionid_enc", "")),
+        "has_totp": bool(getattr(acc, "totp_secret_enc", "")),
         "device_key": dkey,
         "device_label": dlabel,
         "usage": stats,
@@ -249,14 +250,20 @@ def create_account(
     max_posts_per_day: int = 0,
     max_posts_per_hour: int = 0,
     device_key: str = "",
+    totp_secret: str = "",
 ) -> int:
     from core.device import AUTO_DEVICE_KEY, DEVICE_BY_KEY
+    from core.totp import normalize_totp_secret, totp_secret_valid
 
     dkey = (device_key or "").strip()
     if dkey in ("", AUTO_DEVICE_KEY):
         dkey = ""
     elif dkey not in DEVICE_BY_KEY:
         dkey = ""
+
+    totp_raw = (totp_secret or "").strip()
+    if totp_raw and not totp_secret_valid(totp_raw):
+        raise ValueError("Secret do autenticador inválido (use o código base32, ex.: YZYH...)")
 
     with session_scope() as db:
         acc = Account(
@@ -270,12 +277,16 @@ def create_account(
         )
         if password:
             acc.password_enc = encrypt_secret(password)
+        if totp_raw:
+            acc.totp_secret_enc = encrypt_secret(normalize_totp_secret(totp_raw))
         db.add(acc)
         db.flush()
         return acc.id
 
 
 def update_account(account_id: int, **fields) -> None:
+    from core.totp import normalize_totp_secret, totp_secret_valid
+
     with session_scope() as db:
         acc = db.get(Account, account_id)
         if not acc:
@@ -288,6 +299,12 @@ def update_account(account_id: int, **fields) -> None:
             sid = fields.pop("sessionid")
             if sid:
                 acc.sessionid_enc = encrypt_secret(sid.strip())
+        if "totp_secret" in fields:
+            totp = fields.pop("totp_secret")
+            if totp:
+                if not totp_secret_valid(totp):
+                    raise ValueError("Secret do autenticador inválido")
+                acc.totp_secret_enc = encrypt_secret(normalize_totp_secret(totp))
         if "username" in fields and fields["username"] is not None:
             fields["username"] = fields["username"].strip().lstrip("@").lower()
         if "proxy_url" in fields and fields["proxy_url"] is not None:
@@ -316,6 +333,8 @@ def save_account_settings(account_id: int, **fields) -> dict:
         fields.pop("password")
     if "sessionid" in fields and not fields["sessionid"]:
         fields.pop("sessionid")
+    if "totp_secret" in fields and not fields["totp_secret"]:
+        fields.pop("totp_secret")
     if "device_key" in fields:
         dkey = (fields.get("device_key") or "").strip()
         if dkey in ("", AUTO_DEVICE_KEY):
@@ -422,6 +441,7 @@ def connect_account(
         acc_username = acc.username
         acc_proxy = acc.proxy_url
         acc_name = acc.name
+        totp_secret = decrypt_secret(getattr(acc, "totp_secret_enc", "") or "") or ""
 
         try:
             if verification_code and pending_2fa and acc_username and pwd:
@@ -467,21 +487,70 @@ def connect_account(
                 )
                 if payload:
                     _pending_2fa[account_id] = payload
-                acc.status = "pending"
-                acc.status_message = "Aguardando código 2FA"
-                return {"status": "needs_2fa", "message": str(exc)}
-            if exc.kind == "challenge":
+
+                # Secret do autenticador salvo → gera código e completa sozinho
+                if totp_secret and acc_username and pwd and not verification_code:
+                    try:
+                        from core.totp import generate_totp_code
+
+                        auto_code = generate_totp_code(totp_secret, wait_if_expiring=True)
+                        notify.log_event("2FA automático (TOTP) — enviando código", "info", acc_name)
+                        result = ig.complete_two_factor(
+                            username=acc_username,
+                            password=pwd,
+                            verification_code=auto_code,
+                            pending=_pending_2fa.get(account_id) or payload or {"settings": exc.settings},
+                            proxy_url=acc_proxy,
+                            account_id=account_id,
+                            device_key=login_device_key,
+                        )
+                        # sucesso: cai no fluxo normal abaixo (fora do except)
+                    except ig.InstagramError as exc2:
+                        if getattr(exc2, "pending_2fa", None):
+                            _pending_2fa[account_id] = exc2.pending_2fa
+                        elif exc2.settings:
+                            _pending_2fa[account_id] = {"settings": exc2.settings}
+                        acc.status = "pending"
+                        acc.status_message = "2FA automático falhou — digite o código"
+                        return {
+                            "status": "needs_2fa",
+                            "message": str(exc2) or "Código TOTP falhou. Digite manualmente.",
+                            "auto_totp_failed": True,
+                        }
+                    except Exception as totp_exc:  # noqa: BLE001
+                        acc.status = "pending"
+                        acc.status_message = "Aguardando código 2FA"
+                        return {
+                            "status": "needs_2fa",
+                            "message": f"Não gerou TOTP ({totp_exc}). Digite o código.",
+                            "auto_totp_failed": True,
+                        }
+                    else:
+                        # result preenchido — segue para persistir sessão
+                        pass
+                else:
+                    acc.status = "pending"
+                    acc.status_message = "Aguardando código 2FA"
+                    return {"status": "needs_2fa", "message": str(exc)}
+                # se auto TOTP ok, não retorna — continua para gravar sessão
+            elif exc.kind == "challenge":
                 if exc.settings:
                     _pending_2fa[account_id] = exc.settings
                 acc.status = "pending"
                 acc.status_message = str(exc)
                 return {"status": "needs_challenge", "message": str(exc)}
-            if getattr(exc, "kind", "") == "login_required" or _is_session_expired_message(str(exc)):
+            elif getattr(exc, "kind", "") == "login_required" or _is_session_expired_message(str(exc)):
                 _mark_session_expired(db, acc, str(exc))
+                return {"status": "error", "message": str(exc)}
             else:
                 acc.status = "error"
                 acc.status_message = str(exc)
-            return {"status": "error", "message": str(exc)}
+                return {"status": "error", "message": str(exc)}
+            # se chegou aqui com two_factor + auto ok, result existe
+            if "result" not in locals() or not result:
+                acc.status = "pending"
+                acc.status_message = "Aguardando código 2FA"
+                return {"status": "needs_2fa", "message": str(exc)}
 
         _pending_2fa.pop(account_id, None)
         _pending_verify.pop(account_id, None)
