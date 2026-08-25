@@ -558,36 +558,80 @@ def _normalize_link(link: str) -> str:
     return link
 
 
-def post_story(account, media_path: str, caption: str = "", link: str = "") -> dict[str, Any]:
-    """Publica foto ou vídeo como Story, com link opcional. Retorna {media_pk, code, settings, kind}."""
+def post_story(
+    account,
+    media_path: str,
+    caption: str = "",
+    link: str | dict | None = None,
+) -> dict[str, Any]:
+    """Publica foto ou vídeo como Story, com link opcional e sticker queimado."""
     media = Path(media_path)
     if not media.exists():
         raise InstagramError(f"Mídia não encontrada: {media_path}")
     kind = _story_media_kind(media)
-    link = _normalize_link(link)
+
+    link_info: dict | None = None
+    if isinstance(link, dict):
+        link_info = link
+    elif link:
+        link_info = {"url": _normalize_link(str(link)), "x": 0.5, "y": 0.8}
+
     story_links = []
-    if link:
+    upload_path = media
+    stamped_temp: Path | None = None
+    thumb_override: Path | None = None
+
+    if link_info and link_info.get("url"):
         from instagrapi.types import StoryLink
 
+        from core import story_sticker as ss
+
+        url = _normalize_link(str(link_info["url"]))
+        lx = float(link_info.get("x", 0.5))
+        ly = float(link_info.get("y", 0.8))
+        lw = float(link_info.get("width", link_info.get("link_w", 0.6)))
+        lh = float(link_info.get("height", link_info.get("link_h", ss.STICKER_NORM_H)))
+
         try:
-            story_links = [StoryLink(webUri=link)]
+            stamped, geom = ss.prepare_story_image(
+                media,
+                {
+                    "url": url,
+                    "text": str(link_info.get("text") or ""),
+                    "x": lx,
+                    "y": ly,
+                },
+            )
+            stamped_temp = stamped
+            if geom:
+                lw = geom["width"]
+                lh = geom["height"]
+            if kind == "photo":
+                upload_path = stamped
+            else:
+                thumb_override = stamped
+            story_links = [
+                StoryLink(webUri=url, x=lx, y=ly, width=lw, height=lh, rotation=0.0)
+            ]
         except Exception as exc:  # noqa: BLE001
-            raise InstagramError(f"Link inválido: {link}") from exc
+            raise InstagramError(f"Erro ao preparar sticker de link: {exc}") from exc
+
     temp_thumb: Path | None = None
     try:
 
         def work(cl):
             nonlocal temp_thumb
             if kind == "photo":
-                return cl.photo_upload_to_story(media, caption or "", links=story_links)
-            thumb = None
-            from core.video_deps import make_video_thumbnail
+                return cl.photo_upload_to_story(upload_path, caption or "", links=story_links)
+            thumb = thumb_override
+            if thumb is None:
+                from core.video_deps import make_video_thumbnail
 
-            try:
-                temp_thumb = make_video_thumbnail(media)
-                thumb = temp_thumb
-            except Exception:  # noqa: BLE001
-                thumb = None
+                try:
+                    temp_thumb = make_video_thumbnail(media)
+                    thumb = temp_thumb
+                except Exception:  # noqa: BLE001
+                    thumb = None
             return cl.video_upload_to_story(media, caption or "", thumbnail=thumb, links=story_links)
 
         story, settings = _run_authed(account, work)
@@ -600,11 +644,12 @@ def post_story(account, media_path: str, caption: str = "", link: str = "") -> d
             exc_kind = "login_required"
         raise InstagramError(_friendly(exc), kind=exc_kind) from exc
     finally:
-        if temp_thumb and temp_thumb.is_file():
-            try:
-                temp_thumb.unlink()
-            except OSError:
-                pass
+        for p in (temp_thumb, stamped_temp):
+            if p and p.is_file():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
 
     return {
         "media_pk": str(story.pk),

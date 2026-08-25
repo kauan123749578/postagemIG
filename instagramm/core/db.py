@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -110,9 +111,16 @@ class ScheduledPost(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    post_type: Mapped[str] = mapped_column(String(20), default="reel")  # reel | story
     video_path: Mapped[str] = mapped_column(Text, default="")
     cover_path: Mapped[str] = mapped_column(Text, default="")
     caption: Mapped[str] = mapped_column(Text, default="")
+    link_url: Mapped[str] = mapped_column(Text, default="")
+    link_text: Mapped[str] = mapped_column(Text, default="")
+    link_x: Mapped[float] = mapped_column(Float, default=0.5)
+    link_y: Mapped[float] = mapped_column(Float, default=0.8)
+    link_w: Mapped[float] = mapped_column(Float, default=0.6)
+    link_h: Mapped[float] = mapped_column(Float, default=0.068625)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/posted/error/cancelled
     error_message: Mapped[str] = mapped_column(Text, default="")
@@ -256,6 +264,15 @@ def _ensure_columns() -> None:
         },
         "accounts": {
             "sessionid_enc": "TEXT DEFAULT ''",
+        },
+        "scheduled_posts": {
+            "post_type": "VARCHAR(20) DEFAULT 'reel'",
+            "link_url": "TEXT DEFAULT ''",
+            "link_text": "TEXT DEFAULT ''",
+            "link_x": "REAL DEFAULT 0.5",
+            "link_y": "REAL DEFAULT 0.8",
+            "link_w": "REAL DEFAULT 0.6",
+            "link_h": "REAL DEFAULT 0.068625",
         },
     }
     with engine.begin() as conn:

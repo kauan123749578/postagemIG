@@ -15,11 +15,13 @@ from ui.views.logs import LogsView
 from ui.views.media import MediaView
 from ui.views.publish import PublishView
 from ui.views.settings import SettingsView
+from ui.views.stories import StoriesView
 
 NAV = [
     ("dashboard", "  📊  Dashboard"),
     ("accounts", "  👤  Contas"),
     ("automations", "  ⚡  Automações"),
+    ("stories", "  📸  Stories"),
     ("publish", "  🚀  Publicar"),
     ("media", "  🎬  Mídia"),
     ("logs", "  📜  Logs"),
@@ -30,6 +32,7 @@ VIEW_CLASSES = {
     "dashboard": DashboardView,
     "accounts": AccountsView,
     "automations": AutomationsView,
+    "stories": StoriesView,
     "publish": PublishView,
     "media": MediaView,
     "logs": LogsView,

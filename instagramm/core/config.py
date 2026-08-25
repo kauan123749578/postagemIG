@@ -24,8 +24,10 @@ IMAGES_DIR = DATA_DIR / "uploads" / "images"
 DB_PATH = DATA_DIR / "app.db"
 KEY_PATH = DATA_DIR / "secret.key"
 LOCAL_FFMPEG = BASE_DIR / "ffmpeg.exe"
+ASSETS_DIR = BASE_DIR / "assets"
+LINK_STICKER_ICON = ASSETS_DIR / "link-sticker.png"
 
-for _p in (DATA_DIR, SESSIONS_DIR, VIDEOS_DIR, IMAGES_DIR):
+for _p in (DATA_DIR, SESSIONS_DIR, VIDEOS_DIR, IMAGES_DIR, ASSETS_DIR):
     _p.mkdir(parents=True, exist_ok=True)
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".m4v"}
