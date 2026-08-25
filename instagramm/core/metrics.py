@@ -32,11 +32,12 @@ def bump_many(counts: dict) -> None:
         bump(key, n)
 
 
-def series(key: str, days: int = 7) -> list[dict]:
+def series(key: str, days: int = 7, *, weekday: bool = False) -> list[dict]:
     """Série diária de uma chave nos últimos N dias (preenche zeros)."""
     today = datetime.now().date()
     span = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
     day_strs = [d.strftime("%Y-%m-%d") for d in span]
+    weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 
     db = SessionLocal()
     try:
@@ -48,7 +49,14 @@ def series(key: str, days: int = 7) -> list[dict]:
         found = {r.day: r.value for r in rows}
     finally:
         db.close()
-    return [{"day": d.strftime("%d/%m"), "value": found.get(d.strftime("%Y-%m-%d"), 0)} for d in span]
+    out = []
+    for d in span:
+        if weekday and days <= 7:
+            label = weekdays[d.weekday()]
+        else:
+            label = d.strftime("%d/%m")
+        out.append({"day": label, "value": found.get(d.strftime("%Y-%m-%d"), 0)})
+    return out
 
 
 def series_sum(keys: list[str], days: int = 7) -> list[dict]:

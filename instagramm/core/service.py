@@ -1003,15 +1003,16 @@ WARM_KEYS = ["like", "comment", "follow", "unfollow", "story_view", "story_like"
 
 def chart_data(days: int = 7) -> dict:
     """Dados agregados para os gráficos do dashboard."""
-    posts = metrics.series("post", days)
+    posts = metrics.series("post", days, weekday=(days <= 7))
     warm = metrics.series_sum(WARM_KEYS, days)
-    errors = metrics.series("error", days)
+    errors = metrics.series("error", days, weekday=(days <= 7))
     breakdown = metrics.totals(WARM_KEYS, days)
     return {
         "posts": posts,
         "warm": warm,
         "errors": errors,
         "breakdown": breakdown,
+        "days": days,
     }
 
 

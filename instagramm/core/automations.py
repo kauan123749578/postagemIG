@@ -368,3 +368,58 @@ def automation_stats() -> dict:
         active = db.query(Automation).filter(Automation.status == "active").count()
         pending = db.query(AutomationJob).filter(AutomationJob.status == "pending").count()
         return {"automations_active": active, "jobs_pending": pending}
+
+
+def list_active_automations_summary(limit: int = 8) -> list[dict]:
+    with svc.session_scope() as db:
+        rows = (
+            db.query(Automation)
+            .filter(Automation.status == "active")
+            .order_by(Automation.id.desc())
+            .limit(limit)
+            .all()
+        )
+        out = []
+        for a in rows:
+            pending = db.query(AutomationJob).filter(
+                AutomationJob.automation_id == a.id,
+                AutomationJob.status == "pending",
+            ).count()
+            out.append({
+                "id": a.id,
+                "name": a.name or f"Automação #{a.id}",
+                "interval_minutes": a.interval_minutes,
+                "pending": pending,
+                "total_posts": a.total_posts or 0,
+            })
+        return out
+
+
+def list_upcoming_jobs(limit: int = 8) -> list[dict]:
+    with svc.session_scope() as db:
+        rows = (
+            db.query(AutomationJob, Automation, Account)
+            .join(Automation, Automation.id == AutomationJob.automation_id)
+            .join(Account, Account.id == AutomationJob.account_id)
+            .filter(
+                Automation.status == "active",
+                AutomationJob.status == "pending",
+            )
+            .order_by(AutomationJob.scheduled_at)
+            .limit(limit)
+            .all()
+        )
+        out = []
+        for job, auto, acc in rows:
+            when = job.scheduled_at
+            if when and when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            out.append({
+                "id": job.id,
+                "automation": auto.name or f"#{auto.id}",
+                "account": acc.name or acc.username or f"#{acc.id}",
+                "username": acc.username or "",
+                "scheduled_at": when.isoformat() if when else "",
+                "video": Path(job.video_path).name if job.video_path else "",
+            })
+        return out

@@ -42,21 +42,7 @@ class AccountsView(BaseView):
         self.password_hint = widgets.subtitle(inner, "A senha fica salva criptografada no seu computador")
         self.password_hint.pack(anchor="w", pady=(2, 0))
         self.fields["proxy_url"] = self._add_field(inner, "Proxy (opcional)", "ip:porta:usuario:senha")
-        widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: 185.72.240.96:7132:usuario:senha  ·  http://usuario:senha@ip:porta  ·  socks5://usuario:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 0))
-
-        widgets.field_label(inner, "Sessionid do navegador (opcional)").pack(anchor="w", pady=(8, 2))
-        self.sessionid_box = ctk.CTkTextbox(inner, height=60, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
-        self.sessionid_box.pack(fill="x", pady=(0, 4))
-        self.sessionid_hint = widgets.subtitle(inner, "Sessionid fica salvo criptografado no seu computador")
-        self.sessionid_hint.pack(anchor="w", pady=(0, 4))
-        widgets.subtitle(inner, "Chrome → instagram.com logado → F12 → Application → Cookies → sessionid").pack(anchor="w", pady=(0, 8))
-
-        row = ctk.CTkFrame(inner, fg_color="transparent")
-        row.pack(fill="x", pady=(4, 6))
-        row.grid_columnconfigure((0, 1), weight=1)
-        self.fields["max_posts_per_day"] = self._add_field_grid(row, "Máx/dia", "0", 0)
-        self.fields["max_posts_per_hour"] = self._add_field_grid(row, "Máx/hora", "0", 1)
-        widgets.subtitle(inner, "0 = sem limite").pack(anchor="w", pady=(0, 8))
+        widgets.subtitle(inner, "Tipos aceitos: HTTP, HTTPS e SOCKS5\nEx.: 185.72.240.96:7132:usuario:senha  ·  http://usuario:senha@ip:porta  ·  socks5://usuario:senha@ip:porta\nRecomendado: proxy residencial/móvel do mesmo país da conta").pack(anchor="w", pady=(2, 8))
 
         self.connect_btn = widgets.primary_button(inner, "🔗  Conectar conta", self._save_and_connect)
         self.connect_btn.pack(fill="x", pady=(10, 6))
@@ -71,14 +57,6 @@ class AccountsView(BaseView):
     def _add_field(self, master, label, placeholder, show=None):
         widgets.field_label(master, label).pack(anchor="w", pady=(8, 2))
         e = widgets.entry(master, placeholder, show=show)
-        e.pack(fill="x")
-        return e
-
-    def _add_field_grid(self, master, label, placeholder, col):
-        wrap = ctk.CTkFrame(master, fg_color="transparent")
-        wrap.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 6, 6 if col == 0 else 0))
-        widgets.field_label(wrap, label).pack(anchor="w", pady=(0, 2))
-        e = widgets.entry(wrap, placeholder)
         e.pack(fill="x")
         return e
 
@@ -126,7 +104,7 @@ class AccountsView(BaseView):
         top.pack(fill="x", padx=14, pady=(12, 4))
 
         initial = (acc["username"] or acc["name"] or "?")[0].upper()
-        av = ctk.CTkLabel(top, text=initial, width=42, height=42, corner_radius=12, fg_color=theme.PRIMARY, text_color="#fff", font=(theme.FONT, 18, "bold"))
+        av = ctk.CTkLabel(top, text=initial, width=42, height=42, corner_radius=12, fg_color=theme.PRIMARY, text_color="#0a0a0a", font=(theme.FONT, 18, "bold"))
         av.pack(side="left")
 
         info = ctk.CTkFrame(top, fg_color="transparent")
@@ -138,10 +116,9 @@ class AccountsView(BaseView):
         ctk.CTkLabel(info, text=f"@{acc['username'] or 'sem usuário'}", font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w")
 
         usage = acc["usage"]
-        meta = f"📊 {usage['posts_last_24h']} posts/24h" + ("" if usage["unlimited_day"] else f"/{acc['max_posts_per_day']}")
+        meta = f"📊 {usage['posts_last_24h']} posts/24h"
         meta += "    " + ("🛡 Proxy" if acc["proxy_url"] else "○ Sem proxy")
         meta += "    " + ("🔑 Senha salva" if acc.get("has_password") else "○ Sem senha")
-        meta += "    " + ("🍪 Sessionid" if acc.get("has_sessionid") else "")
         ctk.CTkLabel(info, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w", pady=(4, 0))
 
         if acc["status"] != "healthy" and acc["status_message"]:
@@ -164,13 +141,10 @@ class AccountsView(BaseView):
             "username": self.fields["username"].get().strip(),
             "password": self.fields["password"].get().strip(),
             "proxy_url": self.fields["proxy_url"].get().strip(),
-            "sessionid": self.sessionid_box.get("1.0", "end").strip(),
-            "max_posts_per_day": _to_int(self.fields["max_posts_per_day"].get()),
-            "max_posts_per_hour": _to_int(self.fields["max_posts_per_hour"].get()),
         }
 
     def _save_settings_only(self):
-        """Salva proxy, limites e nome sem exigir reconexão."""
+        """Salva proxy e nome sem exigir reconexão."""
         data = self._read_form()
         if not data["name"]:
             self.app.toast("Informe o nome interno", "error")
@@ -185,10 +159,7 @@ class AccountsView(BaseView):
                 name=data["name"],
                 username=data["username"],
                 password=data["password"] or None,
-                sessionid=data["sessionid"] or None,
                 proxy_url=data["proxy_url"],
-                max_posts_per_day=data["max_posts_per_day"],
-                max_posts_per_hour=data["max_posts_per_hour"],
             )
 
         def done(_r):
@@ -202,8 +173,8 @@ class AccountsView(BaseView):
         if not data["name"]:
             self.app.toast("Informe o nome interno", "error")
             return
-        if self.edit_id is None and not data["password"] and not data["sessionid"]:
-            self.app.toast("Informe a senha ou um sessionid", "error")
+        if self.edit_id is None and not data["password"]:
+            self.app.toast("Informe a senha da conta", "error")
             return
 
         self.connect_btn.configure(state="disabled", text="Conectando...")
@@ -212,20 +183,16 @@ class AccountsView(BaseView):
             if self.edit_id is None:
                 acc_id = service.create_account(
                     name=data["name"], username=data["username"], password=data["password"],
-                    proxy_url=data["proxy_url"], max_posts_per_day=data["max_posts_per_day"],
-                    max_posts_per_hour=data["max_posts_per_hour"],
+                    proxy_url=data["proxy_url"],
                 )
             else:
                 acc_id = self.edit_id
                 service.save_account_settings(
                     acc_id, name=data["name"], username=data["username"],
                     password=data["password"] or None,
-                    sessionid=data["sessionid"] or None,
                     proxy_url=data["proxy_url"],
-                    max_posts_per_day=data["max_posts_per_day"],
-                    max_posts_per_hour=data["max_posts_per_hour"],
                 )
-            res = service.connect_account(acc_id, password=data["password"] or None, sessionid=data["sessionid"] or None)
+            res = service.connect_account(acc_id, password=data["password"] or None)
             return acc_id, data["username"], res, data["proxy_url"]
 
         self.app.run_async(task, on_done=self._after_connect, on_error=self._connect_failed)
@@ -341,19 +308,6 @@ class AccountsView(BaseView):
                 text_color=theme.MUTED,
             )
         self.fields["proxy_url"].delete(0, "end"); self.fields["proxy_url"].insert(0, acc["proxy_url"] or "")
-        self.sessionid_box.delete("1.0", "end")
-        if acc.get("has_sessionid"):
-            self.sessionid_hint.configure(
-                text="✓ Sessionid já salvo — cole um novo só se quiser trocar",
-                text_color=theme.SUCCESS,
-            )
-        else:
-            self.sessionid_hint.configure(
-                text="Sessionid fica salvo criptografado no seu computador",
-                text_color=theme.MUTED,
-            )
-        self.fields["max_posts_per_day"].delete(0, "end"); self.fields["max_posts_per_day"].insert(0, str(acc["max_posts_per_day"]))
-        self.fields["max_posts_per_hour"].delete(0, "end"); self.fields["max_posts_per_hour"].insert(0, str(acc["max_posts_per_hour"]))
         self.connect_btn.configure(text="💾  Salvar e reconectar")
 
     def _delete(self, acc):
@@ -385,18 +339,7 @@ class AccountsView(BaseView):
     def _reset_form(self):
         self.edit_id = None
         self.form_title.configure(text="Conectar nova conta")
-        for key, e in self.fields.items():
+        for _key, e in self.fields.items():
             e.delete(0, "end")
-            if key in ("max_posts_per_day", "max_posts_per_hour"):
-                e.insert(0, "0")
-        self.sessionid_box.delete("1.0", "end")
         self.password_hint.configure(text="A senha fica salva criptografada no seu computador", text_color=theme.MUTED)
-        self.sessionid_hint.configure(text="Sessionid fica salvo criptografado no seu computador", text_color=theme.MUTED)
         self.connect_btn.configure(text="🔗  Conectar conta")
-
-
-def _to_int(value, default=0):
-    try:
-        return max(0, int(str(value).strip() or default))
-    except ValueError:
-        return default
