@@ -396,8 +396,16 @@ def connect_account(
             except Exception:  # noqa: BLE001
                 saved_device_key = ""
 
-        # reaproveita settings da 1ª tentativa quando enviando o código 2FA
-        settings = _pending_2fa.get(account_id)
+        # reaproveita estado da 1ª tentativa quando enviando o código 2FA
+        pending_2fa = _pending_2fa.get(account_id)
+        settings = None
+        if pending_2fa:
+            if isinstance(pending_2fa.get("settings"), dict):
+                settings = pending_2fa["settings"]
+            elif isinstance(pending_2fa, dict) and pending_2fa.get("uuids"):
+                settings = pending_2fa
+            else:
+                settings = pending_2fa
         if not settings and acc.session_json and not sid_input:
             # Só reusa sessão salva em 2FA / check sem senha (não no login senha do zero)
             if verification_code or not pwd:
@@ -411,28 +419,42 @@ def connect_account(
 
         # Login novo (sem settings): usa device já salvo, ou pool escolhe outro modelo
         login_device_key = saved_device_key or None
+        acc_username = acc.username
+        acc_proxy = acc.proxy_url
+        acc_name = acc.name
 
         try:
-            if effective_sid and not pwd and not verification_code:
+            if verification_code and pending_2fa and acc_username and pwd:
+                # Caminho rápido: só envia o TOTP, sem refazer login Bloks inteiro
+                result = ig.complete_two_factor(
+                    username=acc_username,
+                    password=pwd,
+                    verification_code=verification_code,
+                    pending=pending_2fa if isinstance(pending_2fa, dict) else {"settings": pending_2fa},
+                    proxy_url=acc_proxy,
+                    account_id=account_id,
+                    device_key=login_device_key,
+                )
+            elif effective_sid and not pwd and not verification_code:
                 result = ig.login(
-                    sessionid=effective_sid, proxy_url=acc.proxy_url,
+                    sessionid=effective_sid, proxy_url=acc_proxy,
                     account_id=account_id, settings=settings,
                     device_key=login_device_key,
                 )
-            elif acc.username and pwd:
+            elif acc_username and pwd:
                 result = ig.login(
-                    username=acc.username,
+                    username=acc_username,
                     password=pwd,
                     sessionid=sid_input or None,
                     verification_code=verification_code,
-                    proxy_url=acc.proxy_url,
+                    proxy_url=acc_proxy,
                     settings=settings if not (sid_input) else None,
                     account_id=account_id,
                     device_key=login_device_key,
                 )
             elif effective_sid:
                 result = ig.login(
-                    sessionid=effective_sid, proxy_url=acc.proxy_url,
+                    sessionid=effective_sid, proxy_url=acc_proxy,
                     account_id=account_id, settings=settings,
                     device_key=login_device_key,
                 )
@@ -440,8 +462,11 @@ def connect_account(
                 return {"status": "error", "message": "Informe senha ou sessionid para conectar."}
         except ig.InstagramError as exc:
             if exc.kind == "two_factor":
-                if exc.settings:
-                    _pending_2fa[account_id] = exc.settings
+                payload = getattr(exc, "pending_2fa", None) or (
+                    {"settings": exc.settings} if exc.settings else None
+                )
+                if payload:
+                    _pending_2fa[account_id] = payload
                 acc.status = "pending"
                 acc.status_message = "Aguardando código 2FA"
                 return {"status": "needs_2fa", "message": str(exc)}

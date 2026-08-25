@@ -127,7 +127,7 @@ class LoginFlow:
                 raise ReloginAttemptExceeded()
             self.client.relogin_attempt += 1
 
-        if self.client.user_id and not relogin:
+        if self.client.user_id and not relogin and not (verification_code or "").strip():
             return True
 
         # Phase 1 — Pre-login device init

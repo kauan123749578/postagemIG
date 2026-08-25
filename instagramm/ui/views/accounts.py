@@ -382,17 +382,24 @@ class AccountsView(BaseView):
         dlg = TwoFactorDialog(self.app, username or "", on_submit=lambda code: self._submit_2fa(dlg, acc_id, username, code))
 
     def _submit_2fa(self, dlg, acc_id, username, code):
+        dlg.submit_btn.configure(state="disabled", text="Validando...")
+        dlg.error_label.configure(text="Enviando código (modo rápido)...", text_color=theme.MUTED)
+
         def task():
             return service.connect_account(acc_id, verification_code=code)
 
         def done(res):
+            dlg.submit_btn.configure(state="normal", text="Confirmar")
             self.app._challenge_dialogs.pop(acc_id, None)
             if res.get("status") == "connected":
                 self.app.toast("Conta conectada com sucesso", "success")
                 dlg.destroy()
                 self._reset_form()
             elif res.get("status") == "needs_2fa":
-                dlg.set_error("Código incorreto, tente novamente.")
+                dlg.set_error(
+                    "Código inválido ou expirado. Abra o autenticador, "
+                    "espere o código NOVO (6 dígitos) e tente de novo."
+                )
             elif res.get("status") == "needs_challenge":
                 dlg.destroy()
                 self._open_challenge(acc_id, username)

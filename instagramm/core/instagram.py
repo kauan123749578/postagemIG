@@ -8,10 +8,17 @@ logger = logging.getLogger("instagram")
 
 
 class InstagramError(Exception):
-    def __init__(self, message: str, kind: str = "error", settings: dict | None = None):
+    def __init__(
+        self,
+        message: str,
+        kind: str = "error",
+        settings: dict | None = None,
+        pending_2fa: dict | None = None,
+    ):
         super().__init__(message)
         self.kind = kind  # error / two_factor / challenge / rate_limit
         self.settings = settings  # device/uuids para reaproveitar no envio do 2FA
+        self.pending_2fa = pending_2fa  # estado completo p/ 2FA rápido (context + last_json)
 
 
 def _friendly(exc: Exception) -> str:
@@ -46,6 +53,10 @@ def _friendly(exc: Exception) -> str:
         "ClientThrottledError": "Limite do Instagram atingido. Aguarde antes de postar.",
         "ProxyAddressIsBlocked": "Proxy bloqueado pelo Instagram.",
     }
+    if "verification" in low and ("invalid" in low or "incorrect" in low or "wrong" in low):
+        return "Código 2FA inválido ou expirado. Gere um código novo no app e tente de novo."
+    if "two_factor" in low and ("invalid" in low or "incorrect" in low):
+        return "Código 2FA inválido ou expirado. Gere um código novo no app e tente de novo."
     if name in hints:
         return hints[name]
     # erros JSON/dict da API
@@ -96,11 +107,14 @@ def build_client(
     settings: dict | None = None,
     account_id: int | None = None,
     device_key: str | None = None,
+    *,
+    fast: bool = False,
 ):
     from core.device import apply_device, pick_device_key_for_new_account, used_device_keys_from_accounts
 
     cl = _new_client()
-    cl.delay_range = [2, 5]
+    # Login/2FA: delays baixos — TOTP expira em ~30s; [2,5]s por request estourava o código
+    cl.delay_range = [0, 0.4] if fast else [1, 2]
     if settings:
         # Fluxo 2FA / sessão salva: NÃO troca o device
         try:
@@ -160,6 +174,148 @@ def build_client(
     return cl
 
 
+def _capture_2fa_state(cl) -> dict:
+    """Guarda device + last_json + context Bloks para enviar o código sem refazer login."""
+    from copy import deepcopy
+
+    last_json = deepcopy(getattr(cl, "last_json", None) or {})
+    if not isinstance(last_json, dict):
+        last_json = {}
+    context = ""
+    if hasattr(cl, "bloks_extract_two_step_verification_context"):
+        try:
+            context = cl.bloks_extract_two_step_verification_context(last_json) or ""
+        except Exception:  # noqa: BLE001
+            context = ""
+    if not context and hasattr(cl, "_extract_two_step_verification_context"):
+        try:
+            context = cl._extract_two_step_verification_context(last_json) or ""
+        except Exception:  # noqa: BLE001
+            context = ""
+    return {
+        "settings": cl.get_settings(),
+        "last_json": last_json,
+        "two_step_context": context,
+    }
+
+
+def _login_result_payload(cl, device_key: str | None = None) -> dict[str, Any]:
+    assigned = getattr(cl, "_assigned_device_key", None) or device_key or ""
+    info = None
+    try:
+        info = cl.account_info()
+    except Exception:  # noqa: BLE001
+        info = None
+    username = (getattr(info, "username", None) or getattr(cl, "username", None) or "")
+    return {
+        "settings": cl.get_settings(),
+        "username": username,
+        "full_name": getattr(info, "full_name", "") if info else "",
+        "follower_count": getattr(info, "follower_count", 0) if info else 0,
+        "media_count": getattr(info, "media_count", 0) if info else 0,
+        "device_key": assigned,
+    }
+
+
+def complete_two_factor(
+    *,
+    username: str,
+    password: str,
+    verification_code: str,
+    pending: dict,
+    proxy_url: str | None = None,
+    account_id: int | None = None,
+    device_key: str | None = None,
+) -> dict[str, Any]:
+    """Envia código 2FA sem refazer login Bloks inteiro (evita expirar o TOTP)."""
+    from copy import deepcopy
+    from uuid import uuid4
+
+    from instagrapi.exceptions import ChallengeRequired, TwoFactorRequired
+
+    code = (verification_code or "").strip()
+    if not code:
+        raise InstagramError("Informe o código 2FA.")
+
+    settings = pending.get("settings") if isinstance(pending.get("settings"), dict) else pending
+    last_json = pending.get("last_json") or {}
+    context = (pending.get("two_step_context") or "").strip()
+
+    cl = build_client(proxy_url, settings, account_id=account_id, device_key=device_key, fast=True)
+    cl.username = username
+    cl.password = password
+    if last_json:
+        cl.last_json = deepcopy(last_json)
+
+    try:
+        logged = False
+
+        # Caminho rápido Bloks (Phantom): só valida o código, não repete senha + pre-login
+        if context and hasattr(cl, "bloks_two_step_verification_verify_code"):
+            _ensure_phantom_path()
+            from phantom.login import LoginFlow
+
+            flow = LoginFlow(cl)
+            flow.waterfall_id = pending.get("waterfall_id") or str(uuid4())
+            result = flow._handle_two_factor(context, code)
+            logged = flow._apply_login(result)
+            if logged:
+                cl.last_login = __import__("time").time()
+
+        # Legacy: two_factor_login direto com identifier salvo
+        elif isinstance(last_json, dict) and last_json.get("two_factor_info", {}).get("two_factor_identifier"):
+            tfi = last_json["two_factor_info"]["two_factor_identifier"]
+            data = {
+                "verification_code": code,
+                "phone_id": cl.phone_id,
+                "_csrftoken": cl.token,
+                "two_factor_identifier": tfi,
+                "username": username,
+                "trust_this_device": "0",
+                "guid": cl.uuid,
+                "device_id": cl.android_device_id,
+                "waterfall_id": str(uuid4()),
+                "verification_method": "3",
+            }
+            cl.private_request("accounts/two_factor_login/", data, login=True)
+            if hasattr(cl, "last_response") and cl.last_response is not None:
+                hdr = cl.last_response.headers.get("ig-set-authorization")
+                if hdr and hasattr(cl, "parse_authorization"):
+                    cl.authorization_data = cl.parse_authorization(hdr)
+            logged = True
+            cl.last_login = __import__("time").time()
+
+        else:
+            # Fallback: login completo, mas sem post-login pesado
+            noop = lambda: True  # noqa: E731
+            if hasattr(cl, "login_flow"):
+                cl.login_flow = noop
+            logged = bool(cl.login(username, password, verification_code=code))
+
+        if not logged:
+            raise InstagramError(
+                "Código 2FA inválido ou expirado. Gere um código novo no app.",
+                kind="two_factor",
+                pending_2fa=_capture_2fa_state(cl),
+            )
+        return _login_result_payload(cl, device_key)
+
+    except TwoFactorRequired as exc:
+        pending_new = _capture_2fa_state(cl)
+        raise InstagramError(
+            _friendly(exc),
+            kind="two_factor",
+            settings=pending_new.get("settings"),
+            pending_2fa=pending_new,
+        ) from exc
+    except ChallengeRequired as exc:
+        raise InstagramError(_friendly(exc), kind="challenge", settings=cl.get_settings()) from exc
+    except InstagramError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise InstagramError(_friendly(exc)) from exc
+
+
 def login(
     *,
     username: str | None = None,
@@ -177,7 +333,10 @@ def login(
         TwoFactorRequired,
     )
 
-    cl = build_client(proxy_url, settings, account_id=account_id, device_key=device_key)
+    cl = build_client(
+        proxy_url, settings, account_id=account_id, device_key=device_key,
+        fast=bool((verification_code or "").strip()),
+    )
 
     try:
         if sessionid and sessionid.strip():
@@ -191,7 +350,13 @@ def login(
         else:
             raise InstagramError("Informe usuário e senha (ou um sessionid).")
     except TwoFactorRequired as exc:
-        raise InstagramError(_friendly(exc), kind="two_factor", settings=cl.get_settings()) from exc
+        pending = _capture_2fa_state(cl)
+        raise InstagramError(
+            _friendly(exc),
+            kind="two_factor",
+            settings=pending.get("settings"),
+            pending_2fa=pending,
+        ) from exc
     except ChallengeRequired as exc:
         msg = _friendly(exc)
         if not msg or msg.lower() in ("challenge", "challenge_required"):
@@ -205,20 +370,7 @@ def login(
     except Exception as exc:  # noqa: BLE001
         raise InstagramError(_friendly(exc)) from exc
 
-    try:
-        info = cl.account_info()
-    except Exception as exc:  # noqa: BLE001
-        raise InstagramError(_friendly(exc)) from exc
-
-    assigned = getattr(cl, "_assigned_device_key", None) or device_key or ""
-    return {
-        "settings": cl.get_settings(),
-        "username": info.username,
-        "full_name": getattr(info, "full_name", ""),
-        "follower_count": getattr(info, "follower_count", 0),
-        "media_count": getattr(info, "media_count", 0),
-        "device_key": assigned,
-    }
+    return _login_result_payload(cl, device_key)
 
 
 def _client_from_account(account, settings: dict, *, use_proxy: bool = True):
