@@ -4,10 +4,10 @@ import customtkinter as ctk
 from ui import theme
 
 
-def soft_scrollable(master, *, speed: float = 0.18, **kwargs):
+def soft_scrollable(master, *, speed: float = 0.25, **kwargs):
     """CTkScrollableFrame com roda do mouse rápida (poucos notches = desce bastante).
 
-    speed: fração da página por notch (~0.18 = ~5 notches no conteúdo longo).
+    speed: fração da página por notch (~0.25 = ~4 notches no conteúdo longo).
     """
     opts = dict(
         fg_color="transparent",
@@ -23,9 +23,7 @@ def soft_scrollable(master, *, speed: float = 0.18, **kwargs):
         pass
 
     def _wheel(event):
-        # Um notch move uma fatia grande da página (não 1 unitinho)
         direction = -1 if event.delta > 0 else 1
-        # Windows às vezes manda ±240 etc.
         notches = max(1, abs(int(event.delta / 120)) or 1)
         amount = direction * speed * notches
         top, _bottom = canvas.yview()
@@ -41,6 +39,64 @@ def soft_scrollable(master, *, speed: float = 0.18, **kwargs):
     frame.bind("<Enter>", _enter)
     frame.bind("<Leave>", _leave)
     return frame
+
+
+def metric_card(master, *, icon: str, label: str, value: str = "—", badge: str = ""):
+    """Card preto/dourado: ícone + badge opcional, número grande branco, label."""
+    outer = ctk.CTkFrame(
+        master,
+        fg_color=theme.CARD,
+        corner_radius=16,
+        border_width=1,
+        border_color=theme.BORDER,
+    )
+    ctk.CTkFrame(outer, fg_color=theme.PRIMARY, height=2, corner_radius=0).pack(fill="x")
+
+    body = ctk.CTkFrame(outer, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=16, pady=(12, 16))
+
+    top = ctk.CTkFrame(body, fg_color="transparent")
+    top.pack(fill="x")
+    ctk.CTkLabel(
+        top,
+        text=icon,
+        width=36,
+        height=36,
+        corner_radius=10,
+        fg_color=theme.PRIMARY_SOFT,
+        text_color=theme.PRIMARY,
+        font=(theme.FONT, 16),
+    ).pack(side="left")
+    badge_lbl = ctk.CTkLabel(
+        top,
+        text=badge or " ",
+        font=(theme.FONT, 10, "bold"),
+        text_color=theme.PRIMARY,
+        fg_color=theme.PRIMARY_SOFT,
+        corner_radius=8,
+        height=24,
+    )
+    badge_lbl.pack(side="right")
+    if not badge:
+        badge_lbl.pack_forget()
+
+    value_lbl = ctk.CTkLabel(
+        body,
+        text=value,
+        font=(theme.FONT, 32, "bold"),
+        text_color="#ffffff",
+        anchor="w",
+    )
+    value_lbl.pack(anchor="w", pady=(14, 2))
+    ctk.CTkLabel(
+        body,
+        text=label,
+        font=(theme.FONT, 12),
+        text_color=theme.MUTED,
+        anchor="w",
+    ).pack(anchor="w")
+
+    return outer, value_lbl, badge_lbl
 
 
 def card(master, **kwargs):

@@ -35,7 +35,7 @@ class LogsView(BaseView):
 
         card = widgets.card(self)
         card.pack(fill="both", expand=True)
-        self.list_frame = ctk.CTkScrollableFrame(card, fg_color="transparent")
+        self.list_frame = widgets.soft_scrollable(card)
         self.list_frame.pack(fill="both", expand=True, padx=10, pady=12)
 
     def on_show(self):

@@ -38,13 +38,13 @@ class StaggerView(BaseView):
         accs_card = widgets.card(body)
         accs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         widgets.title(accs_card, "Contas com loop configurado", size=14).pack(anchor="w", padx=16, pady=(14, 6))
-        self.accs_frame = ctk.CTkScrollableFrame(accs_card, fg_color="transparent")
+        self.accs_frame = widgets.soft_scrollable(accs_card)
         self.accs_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
         queue_card = widgets.card(body)
         queue_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         widgets.title(queue_card, "Fila atual", size=14).pack(anchor="w", padx=16, pady=(14, 6))
-        self.queue_frame = ctk.CTkScrollableFrame(queue_card, fg_color="transparent")
+        self.queue_frame = widgets.soft_scrollable(queue_card)
         self.queue_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
     def on_show(self):

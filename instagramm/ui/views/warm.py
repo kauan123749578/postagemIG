@@ -22,7 +22,7 @@ class WarmView(BaseView):
         widgets.subtitle(left, "Já vem pré-configurado no modo recomendado — é só apertar Iniciar").pack(anchor="w")
         widgets.chip(header, "PRESET RECOMENDADO", theme.ACCENT, theme.PRIMARY_SOFT).pack(side="right", pady=6)
 
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll = widgets.soft_scrollable(self)
         self.scroll.pack(fill="both", expand=True, pady=(12, 0))
 
         # --- seleção de contas ---

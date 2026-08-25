@@ -55,7 +55,7 @@ class ScheduleView(BaseView):
         listcard = widgets.card(self)
         listcard.place(relx=0.32, y=64, relwidth=0.68, relheight=0.86)
         widgets.title(listcard, "Agendados", size=15).pack(anchor="w", padx=18, pady=(14, 6))
-        self.list_frame = ctk.CTkScrollableFrame(listcard, fg_color="transparent")
+        self.list_frame = widgets.soft_scrollable(listcard)
         self.list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
     def on_show(self):

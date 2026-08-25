@@ -19,7 +19,7 @@ class LoopView(BaseView):
         widgets.subtitle(self, "Publica os vídeos da lista em sequência (contínuo) ou em lotes (recorrente)").pack(anchor="w", pady=(0, 12))
 
         # container rolável — garante que tudo apareça mesmo em telas pequenas
-        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll = widgets.soft_scrollable(self)
         scroll.pack(fill="both", expand=True)
 
         self.running_card, self.running_body = widgets.section(
@@ -120,7 +120,7 @@ class LoopView(BaseView):
         lhead = ctk.CTkFrame(listcard, fg_color="transparent")
         lhead.pack(fill="x", padx=18, pady=(14, 6))
         widgets.title(lhead, "Vídeos do loop", size=15).pack(side="left")
-        self.videos_frame = ctk.CTkScrollableFrame(listcard, fg_color="transparent", height=220)
+        self.videos_frame = widgets.soft_scrollable(listcard, height=220)
         self.videos_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
     def on_show(self):

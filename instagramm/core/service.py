@@ -871,16 +871,20 @@ def dashboard_stats() -> dict:
         autos = db.query(Automation).filter(Automation.status == "active").count()
         jobs_pending = db.query(AutomationJob).filter(AutomationJob.status == "pending").count()
         day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        posts_today = db.query(PostLog).filter(PostLog.status == "success", PostLog.posted_at >= day_ago).count()
+        posts_ok = db.query(PostLog).filter(PostLog.status == "success", PostLog.posted_at >= day_ago).count()
+        posts_fail = db.query(PostLog).filter(PostLog.status != "success", PostLog.posted_at >= day_ago).count()
+        attempts = posts_ok + posts_fail
+        success_rate = (posts_ok / attempts * 100.0) if attempts else 0.0
         pending = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
         return {
             "accounts": total,
             "connected": connected,
             "automations_active": autos,
             "jobs_pending": jobs_pending,
-            "posts_24h": posts_today,
+            "posts_24h": posts_ok,
+            "posts_today": posts_ok,
+            "success_rate": round(success_rate, 1),
             "scheduled_pending": pending,
-            # legado (compat)
             "loops_running": autos,
             "warming": jobs_pending,
         }

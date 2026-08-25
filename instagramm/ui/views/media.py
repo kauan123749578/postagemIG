@@ -27,13 +27,13 @@ class MediaView(BaseView):
         vcard = widgets.card(cols)
         vcard.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         widgets.title(vcard, "Vídeos", size=15).pack(anchor="w", padx=16, pady=(14, 6))
-        self.videos_frame = ctk.CTkScrollableFrame(vcard, fg_color="transparent")
+        self.videos_frame = widgets.soft_scrollable(vcard)
         self.videos_frame.pack(fill="both", expand=True, padx=8, pady=(0, 12))
 
         icard = widgets.card(cols)
         icard.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         widgets.title(icard, "Imagens", size=15).pack(anchor="w", padx=16, pady=(14, 6))
-        self.images_frame = ctk.CTkScrollableFrame(icard, fg_color="transparent")
+        self.images_frame = widgets.soft_scrollable(icard)
         self.images_frame.pack(fill="both", expand=True, padx=8, pady=(0, 12))
 
     def on_show(self):

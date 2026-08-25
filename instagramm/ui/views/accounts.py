@@ -29,7 +29,7 @@ class AccountsView(BaseView):
     def _build_form(self):
         form = widgets.card(self)
         form.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
-        inner = ctk.CTkScrollableFrame(form, fg_color="transparent")
+        inner = widgets.soft_scrollable(form)
         inner.pack(fill="both", expand=True, padx=16, pady=16)
 
         self.form_title = widgets.title(inner, "Conectar nova conta", size=16)
@@ -92,7 +92,7 @@ class AccountsView(BaseView):
         self.count_label = ctk.CTkLabel(head, text="0", fg_color=theme.CARD2, corner_radius=10, width=34, text_color=theme.MUTED, font=(theme.FONT, 12, "bold"))
         self.count_label.pack(side="right")
 
-        self.list_frame = ctk.CTkScrollableFrame(wrap, fg_color="transparent")
+        self.list_frame = widgets.soft_scrollable(wrap)
         self.list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
     # ---------- ações ----------
