@@ -235,17 +235,81 @@ def activate_automation(automation_id: int) -> dict:
 
 
 def pause_automation(automation_id: int) -> dict:
+    """Pausa sem apagar a fila — jobs pending ficam congelados até Retomar."""
     with svc.session_scope() as db:
         a = db.get(Automation, automation_id)
         if not a:
             return {"ok": False, "message": "Automação não encontrada"}
-        a.status = "paused"
-        db.query(AutomationJob).filter(
+        if a.status != "active":
+            return {"ok": False, "message": "Só dá para pausar automações ativas"}
+        pending = db.query(AutomationJob).filter(
             AutomationJob.automation_id == a.id,
             AutomationJob.status == "pending",
-        ).update({"status": "cancelled"}, synchronize_session=False)
-        notify.log_event(f"Automação pausada: {a.name}", "info")
-        return {"ok": True, "message": "Pausada"}
+        ).count()
+        a.status = "paused"
+        notify.log_event(
+            f"Automação pausada: {a.name} ({pending} post(s) na fila, prontos para retomar)",
+            "info",
+        )
+        return {"ok": True, "message": f"Pausada — {pending} post(s) guardados na fila", "pending": pending}
+
+
+def resume_automation(automation_id: int, *, gap_seconds: int = 90) -> dict:
+    """Retoma automação pausada: status active + redistribui jobs atrasados."""
+    now = _now()
+    gap = max(30, int(gap_seconds))
+    with svc.session_scope() as db:
+        a = db.get(Automation, automation_id)
+        if not a:
+            return {"ok": False, "message": "Automação não encontrada"}
+        if a.status not in ("paused", "done", "draft", "error"):
+            if a.status == "active":
+                return {"ok": False, "message": "Já está ativa"}
+            return {"ok": False, "message": f"Status inválido para retomar: {a.status}"}
+
+        pending_jobs = (
+            db.query(AutomationJob)
+            .filter(
+                AutomationJob.automation_id == a.id,
+                AutomationJob.status == "pending",
+            )
+            .order_by(AutomationJob.scheduled_at, AutomationJob.id)
+            .all()
+        )
+
+        # Se não sobrou fila, remonta a partir dos vídeos/contas
+        if not pending_jobs:
+            n = _build_jobs(db, a)
+            if n == 0:
+                return {
+                    "ok": False,
+                    "message": "Sem posts na fila e não deu para remontar. Reconecte contas ou confira os vídeos.",
+                }
+            a.status = "active"
+            a.activated_at = now
+            a.last_error = ""
+            notify.log_event(f"Automação retomada (nova fila): {a.name} ({n} posts)", "success")
+            return {"ok": True, "message": f"Retomada — {n} publicações agendadas", "jobs": n}
+
+        cursor = now
+        for job in pending_jobs:
+            if job.scheduled_at < now:
+                job.scheduled_at = cursor
+                cursor = cursor + timedelta(seconds=gap)
+
+        a.status = "active"
+        a.last_error = ""
+        if not a.activated_at:
+            a.activated_at = now
+        notify.log_event(
+            f"Automação retomada: {a.name} ({len(pending_jobs)} post(s) na fila)",
+            "success",
+        )
+        return {
+            "ok": True,
+            "message": f"Retomada — {len(pending_jobs)} post(s) na fila",
+            "jobs": len(pending_jobs),
+        }
 
 
 def delete_automation(automation_id: int) -> dict:

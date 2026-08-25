@@ -37,7 +37,158 @@ class AutomationsView(BaseView):
         self.scroll = widgets.soft_scrollable(self, speed=0.28)
         self.scroll.pack(fill="both", expand=True)
 
+        self._build_list()
         self._build_form()
+
+    # ---------- lista (pausar / retomar) ----------
+    def _build_list(self):
+        card, body = widgets.section(
+            self.scroll,
+            "Suas automações",
+            "Pause para parar a fila e retome depois sem perder o que estava agendado",
+            icon="⚡",
+        )
+        card.pack(fill="x", pady=(0, 12))
+        self.list_body = body
+        self.list_empty = ctk.CTkLabel(
+            body,
+            text="Nenhuma automação ainda — crie abaixo.",
+            font=(theme.FONT, 12),
+            text_color=theme.MUTED,
+        )
+        self.list_empty.pack(anchor="w", pady=8)
+
+    def _reload_list(self):
+        self.app.run_async(auto_svc.list_automations, on_done=self._render_list)
+
+    def _render_list(self, items: list):
+        for w in self.list_body.winfo_children():
+            w.destroy()
+        if not items:
+            ctk.CTkLabel(
+                self.list_body,
+                text="Nenhuma automação ainda — crie abaixo.",
+                font=(theme.FONT, 12),
+                text_color=theme.MUTED,
+            ).pack(anchor="w", pady=8)
+            return
+
+        status_label = {
+            "active": "Ativa",
+            "paused": "Pausada",
+            "draft": "Rascunho",
+            "done": "Concluída",
+            "error": "Erro",
+        }
+        status_color = {
+            "active": theme.SUCCESS,
+            "paused": theme.ACCENT,
+            "draft": theme.MUTED,
+            "done": theme.MUTED,
+            "error": theme.DANGER,
+        }
+
+        for item in items:
+            st = item.get("status") or "draft"
+            row = ctk.CTkFrame(
+                self.list_body,
+                fg_color=theme.CARD2,
+                corner_radius=12,
+                border_width=1,
+                border_color=theme.BORDER,
+            )
+            row.pack(fill="x", pady=4)
+
+            top = ctk.CTkFrame(row, fg_color="transparent")
+            top.pack(fill="x", padx=12, pady=(10, 2))
+            ctk.CTkLabel(
+                top,
+                text=item.get("name") or f"Automação #{item.get('id')}",
+                font=(theme.FONT, 14, "bold"),
+                text_color=theme.TEXT,
+            ).pack(side="left")
+            ctk.CTkLabel(
+                top,
+                text=status_label.get(st, st),
+                font=(theme.FONT, 11, "bold"),
+                text_color=status_color.get(st, theme.MUTED),
+                fg_color=theme.CARD3,
+                corner_radius=8,
+                height=22,
+                width=78,
+            ).pack(side="right")
+
+            meta = (
+                f"{item.get('video_count', 0)} vídeo(s) · "
+                f"{len(item.get('account_ids') or [])} conta(s) · "
+                f"a cada {item.get('interval_minutes', 10)} min · "
+                f"fila {item.get('jobs_pending', 0)} · "
+                f"ok {item.get('jobs_posted', 0)}"
+            )
+            ctk.CTkLabel(
+                row, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w",
+            ).pack(fill="x", padx=12, pady=(0, 6))
+
+            actions = ctk.CTkFrame(row, fg_color="transparent")
+            actions.pack(fill="x", padx=12, pady=(0, 10))
+            aid = item["id"]
+
+            if st == "active":
+                widgets.ghost_button(
+                    actions, "⏸  Pausar", lambda i=aid: self._pause(i), width=110, height=34,
+                ).pack(side="left", padx=(0, 6))
+            elif st in ("paused", "draft", "done", "error"):
+                widgets.primary_button(
+                    actions, "▶  Retomar", lambda i=aid: self._resume(i), width=120, height=34,
+                ).pack(side="left", padx=(0, 6))
+
+            widgets.danger_button(
+                actions, "Excluir", lambda i=aid: self._delete(i), width=90, height=34,
+            ).pack(side="left")
+
+    def _pause(self, automation_id: int):
+        def work():
+            return auto_svc.pause_automation(automation_id)
+
+        def done(res):
+            if res.get("ok"):
+                self.app.toast(res.get("message") or "Pausada", "success")
+            else:
+                self.app.toast(res.get("message") or "Falha ao pausar", "error")
+            self._reload_list()
+
+        self.app.run_async(work, on_done=done)
+
+    def _resume(self, automation_id: int):
+        def work():
+            return auto_svc.resume_automation(automation_id)
+
+        def done(res):
+            if res.get("ok"):
+                self.app.toast(res.get("message") or "Retomada", "success")
+            else:
+                self.app.toast(res.get("message") or "Falha ao retomar", "error")
+            self._reload_list()
+
+        self.app.run_async(work, on_done=done)
+
+    def _delete(self, automation_id: int):
+        from ui.dialogs import confirm
+
+        if not confirm(self.app, "Excluir esta automação e a fila dela?", "Excluir automação"):
+            return
+
+        def work():
+            return auto_svc.delete_automation(automation_id)
+
+        def done(res):
+            if res.get("ok"):
+                self.app.toast("Automação excluída", "success")
+            else:
+                self.app.toast(res.get("message") or "Falha ao excluir", "error")
+            self._reload_list()
+
+        self.app.run_async(work, on_done=done)
 
     # ---------- form ----------
     def _build_form(self):
@@ -368,11 +519,13 @@ class AutomationsView(BaseView):
             self._clear_videos()
             self._clear_cover()
             self._clear_accounts()
+            self._reload_list()
 
         self.app.run_async(work, on_done=done)
 
     def on_show(self):
         self._reload_accounts()
+        self._reload_list()
 
     def refresh(self):
-        pass
+        self._reload_list()

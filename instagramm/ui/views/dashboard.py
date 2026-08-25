@@ -220,7 +220,27 @@ class DashboardView(BaseView):
                 row,
                 text=f"a cada {item.get('interval_minutes')} min · {item.get('pending', 0)} na fila",
                 font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w",
-            ).pack(fill="x", padx=10, pady=(0, 8))
+            ).pack(fill="x", padx=10, pady=(0, 4))
+            aid = item.get("id")
+            if aid:
+                widgets.ghost_button(
+                    row, "⏸ Pausar",
+                    lambda i=aid: self._pause_auto(i),
+                    width=90, height=28,
+                ).pack(anchor="w", padx=10, pady=(0, 8))
+
+    def _pause_auto(self, automation_id: int):
+        def work():
+            return auto_svc.pause_automation(automation_id)
+
+        def done(res):
+            if res.get("ok"):
+                self.app.toast(res.get("message") or "Pausada", "success")
+            else:
+                self.app.toast(res.get("message") or "Falha ao pausar", "error")
+            self._reload()
+
+        self.app.run_async(work, on_done=done)
 
     def _render_upcoming(self, items):
         for w in self.upcoming_body.winfo_children():
