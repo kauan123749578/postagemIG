@@ -5,7 +5,7 @@ import traceback
 import customtkinter as ctk
 
 from core import challenge_flow, service
-from core.config import APP_NAME, APP_VERSION
+from core.config import APP_ICON, APP_NAME, APP_VERSION
 from core.workers import WorkerManager
 from ui import theme
 from ui.views.accounts import AccountsView
@@ -48,6 +48,11 @@ class App(ctk.CTk):
         self.geometry("1200x760")
         self.minsize(1040, 660)
         self.configure(fg_color=theme.BG)
+        if APP_ICON.exists():
+            try:
+                self.iconbitmap(str(APP_ICON))
+            except Exception:  # noqa: BLE001
+                pass
 
         service.setup()
 

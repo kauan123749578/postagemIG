@@ -29,7 +29,7 @@ class StoriesView(BaseView):
             "Story com link clicável — arraste o botão no preview e agende em várias contas",
         ).pack(anchor="w", pady=(0, 12))
 
-        self.scroll = widgets.soft_scrollable(self, speed=0.35)
+        self.scroll = widgets.soft_scrollable(self, speed=0.22)
         self.scroll.pack(fill="both", expand=True)
 
         self._build_media()

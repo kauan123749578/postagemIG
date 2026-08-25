@@ -62,6 +62,8 @@ class Account(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(20), default="unknown")  # healthy/error/pending/unknown
     status_message: Mapped[str] = mapped_column(Text, default="")
+    # chave do pool em core.device (ex.: samsung_m04) — fixo por conta
+    device_key: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     logs: Mapped[list["PostLog"]] = relationship(back_populates="account", cascade="all, delete-orphan")
@@ -264,6 +266,7 @@ def _ensure_columns() -> None:
         },
         "accounts": {
             "sessionid_enc": "TEXT DEFAULT ''",
+            "device_key": "VARCHAR(64) DEFAULT ''",
         },
         "scheduled_posts": {
             "post_type": "VARCHAR(20) DEFAULT 'reel'",

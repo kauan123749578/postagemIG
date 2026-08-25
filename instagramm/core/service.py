@@ -126,8 +126,17 @@ def recent_events(limit: int = 80) -> list[dict]:
 # ---------------- Contas ----------------
 
 def _account_dict(acc: Account, db) -> dict:
+    from core.device import DEVICE_BY_KEY, device_key_from_settings
+
     stats = usage_stats(db, acc.id, acc.max_posts_per_day, acc.max_posts_per_hour)
     loop = acc.loop
+    dkey = (getattr(acc, "device_key", "") or "").strip()
+    if not dkey and acc.session_json:
+        try:
+            dkey = device_key_from_settings(json.loads(acc.session_json))
+        except Exception:  # noqa: BLE001
+            dkey = ""
+    dlabel = DEVICE_BY_KEY[dkey]["label"] if dkey in DEVICE_BY_KEY else (dkey or "")
     return {
         "id": acc.id,
         "name": acc.name,
@@ -142,6 +151,8 @@ def _account_dict(acc: Account, db) -> dict:
         "has_session": bool(acc.session_json),
         "has_password": bool(acc.password_enc),
         "has_sessionid": bool(getattr(acc, "sessionid_enc", "")),
+        "device_key": dkey,
+        "device_label": dlabel,
         "usage": stats,
         "loop_running": bool(loop and loop.is_running),
         "loop_posts": loop.total_posts if loop else 0,
@@ -279,11 +290,20 @@ def connect_account(
         effective_sid = sid_input or saved_sid
         pwd = password or decrypt_secret(acc.password_enc) or None
 
-        # reaproveita device da 1ª tentativa quando enviando o código 2FA
+        from core.device import device_key_from_settings
+
+        # Modelo já atribuído à conta: nunca troca em reconexão
+        saved_device_key = (getattr(acc, "device_key", "") or "").strip()
+        if not saved_device_key and acc.session_json:
+            try:
+                saved_device_key = device_key_from_settings(json.loads(acc.session_json))
+            except Exception:  # noqa: BLE001
+                saved_device_key = ""
+
+        # reaproveita settings da 1ª tentativa quando enviando o código 2FA
         settings = _pending_2fa.get(account_id)
         if not settings and acc.session_json and not sid_input:
-            # Login com senha do zero → NÃO reusa sessão Pixel antiga (Samsung novo)
-            # Só reusa arquivo se for sessionid/check sem senha, ou 2FA sem pending
+            # Só reusa sessão salva em 2FA / check sem senha (não no login senha do zero)
             if verification_code or not pwd:
                 try:
                     settings = json.loads(acc.session_json)
@@ -293,11 +313,15 @@ def connect_account(
         if verification_code:
             _pending_verify[account_id] = verification_code.strip()
 
+        # Login novo (sem settings): usa device já salvo, ou pool escolhe outro modelo
+        login_device_key = saved_device_key or None
+
         try:
             if effective_sid and not pwd and not verification_code:
                 result = ig.login(
                     sessionid=effective_sid, proxy_url=acc.proxy_url,
                     account_id=account_id, settings=settings,
+                    device_key=login_device_key,
                 )
             elif acc.username and pwd:
                 result = ig.login(
@@ -308,11 +332,13 @@ def connect_account(
                     proxy_url=acc.proxy_url,
                     settings=settings if not (sid_input) else None,
                     account_id=account_id,
+                    device_key=login_device_key,
                 )
             elif effective_sid:
                 result = ig.login(
                     sessionid=effective_sid, proxy_url=acc.proxy_url,
                     account_id=account_id, settings=settings,
+                    device_key=login_device_key,
                 )
             else:
                 return {"status": "error", "message": "Informe senha ou sessionid para conectar."}
@@ -340,6 +366,10 @@ def connect_account(
         _pending_verify.pop(account_id, None)
         acc.session_json = json.dumps(result["settings"])
         _persist_sessionid_from_settings(acc, result["settings"])
+        # Grava modelo usado (pool ou inferido da sessão) — fixo daí em diante
+        dkey = (result.get("device_key") or "").strip() or device_key_from_settings(result["settings"]) or saved_device_key
+        if dkey:
+            acc.device_key = dkey
         acc.username = result.get("username") or acc.username
         acc.status = "healthy"
         acc.status_message = "Conectada"
@@ -356,6 +386,11 @@ def check_account(account_id: int) -> dict:
         try:
             result = ig.verify_session(acc)
             acc.session_json = json.dumps(result["settings"])
+            from core.device import device_key_from_settings
+
+            dkey = device_key_from_settings(result["settings"])
+            if dkey and not (getattr(acc, "device_key", "") or "").strip():
+                acc.device_key = dkey
             acc.status = "healthy"
             acc.status_message = "Conectada"
             _export_session_file(acc.username, result["settings"])

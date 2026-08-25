@@ -91,28 +91,48 @@ def _new_client():
         return Client()
 
 
-def build_client(proxy_url: str | None = None, settings: dict | None = None, account_id: int | None = None):
-    from core.device import apply_samsung_device
+def build_client(
+    proxy_url: str | None = None,
+    settings: dict | None = None,
+    account_id: int | None = None,
+    device_key: str | None = None,
+):
+    from core.device import apply_device, pick_device_key_for_new_account, used_device_keys_from_accounts
 
     cl = _new_client()
     cl.delay_range = [2, 5]
     if settings:
-        # Fluxo 2FA / sessão salva: NÃO troca o device (senão o código 2FA falha)
+        # Fluxo 2FA / sessão salva: NÃO troca o device
         try:
             cl.set_settings(settings)
         except Exception:  # noqa: BLE001
             logger.warning("Não foi possível carregar settings de sessão")
-        # Reforça headers Phantom após set_settings
         if hasattr(cl, "_header_builder"):
             cl._header_builder = None
-    else:
-        # Login novo: Samsung SM-E045F (não Pixel 8 Pro padrão do instagrapi)
         try:
-            from phantom.device import apply_samsung_device as apply_ph
+            from core.device import device_key_from_settings
 
-            apply_ph(cl)
+            cl._assigned_device_key = device_key_from_settings(settings)  # noqa: SLF001
         except Exception:  # noqa: BLE001
-            apply_samsung_device(cl)
+            pass
+    else:
+        # Login novo: escolhe modelo do pool (Samsung incluso; conta nova ≠ troca em conta velha)
+        key = (device_key or "").strip()
+        if not key:
+            used: list[str] = []
+            try:
+                from core.db import Account, SessionLocal
+
+                db = SessionLocal()
+                try:
+                    rows = db.query(Account).all()
+                    used = used_device_keys_from_accounts(rows)
+                finally:
+                    db.close()
+            except Exception:  # noqa: BLE001
+                used = []
+            key = pick_device_key_for_new_account(used)
+        apply_device(cl, key)
         try:
             cl.set_locale("pt_BR")
             cl.set_country("BR")
@@ -122,6 +142,11 @@ def build_client(proxy_url: str | None = None, settings: dict | None = None, acc
             pass
         if hasattr(cl, "_header_builder"):
             cl._header_builder = None
+        # expõe a key escolhida para o caller gravar na conta
+        try:
+            cl._assigned_device_key = key  # noqa: SLF001
+        except Exception:  # noqa: BLE001
+            pass
     if proxy_url and proxy_url.strip():
         normalized = normalize_proxy_url(proxy_url)
         try:
@@ -144,6 +169,7 @@ def login(
     proxy_url: str | None = None,
     settings: dict | None = None,
     account_id: int | None = None,
+    device_key: str | None = None,
 ) -> dict[str, Any]:
     """Loga e retorna {settings, username, full_name, ...}. Levanta InstagramError."""
     from instagrapi.exceptions import (
@@ -151,7 +177,7 @@ def login(
         TwoFactorRequired,
     )
 
-    cl = build_client(proxy_url, settings, account_id=account_id)
+    cl = build_client(proxy_url, settings, account_id=account_id, device_key=device_key)
 
     try:
         if sessionid and sessionid.strip():
@@ -184,12 +210,14 @@ def login(
     except Exception as exc:  # noqa: BLE001
         raise InstagramError(_friendly(exc)) from exc
 
+    assigned = getattr(cl, "_assigned_device_key", None) or device_key or ""
     return {
         "settings": cl.get_settings(),
         "username": info.username,
         "full_name": getattr(info, "full_name", ""),
         "follower_count": getattr(info, "follower_count", 0),
         "media_count": getattr(info, "media_count", 0),
+        "device_key": assigned,
     }
 
 

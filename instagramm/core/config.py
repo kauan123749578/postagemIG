@@ -26,6 +26,7 @@ KEY_PATH = DATA_DIR / "secret.key"
 LOCAL_FFMPEG = BASE_DIR / "ffmpeg.exe"
 ASSETS_DIR = BASE_DIR / "assets"
 LINK_STICKER_ICON = ASSETS_DIR / "link-sticker.png"
+APP_ICON = BASE_DIR / "logoooo.ico"
 
 for _p in (DATA_DIR, SESSIONS_DIR, VIDEOS_DIR, IMAGES_DIR, ASSETS_DIR):
     _p.mkdir(parents=True, exist_ok=True)

@@ -120,6 +120,13 @@ class AccountsView(BaseView):
         meta += "    " + ("🛡 Proxy" if acc["proxy_url"] else "○ Sem proxy")
         meta += "    " + ("🔑 Senha salva" if acc.get("has_password") else "○ Sem senha")
         ctk.CTkLabel(info, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED).pack(anchor="w", pady=(4, 0))
+        if acc.get("device_label"):
+            ctk.CTkLabel(
+                info,
+                text=f"📱 {acc['device_label']}",
+                font=(theme.FONT, 11),
+                text_color=theme.PRIMARY,
+            ).pack(anchor="w", pady=(2, 0))
 
         if acc["status"] != "healthy" and acc["status_message"]:
             ctk.CTkLabel(card, text=acc["status_message"], font=(theme.FONT, 11), text_color=theme.DANGER, wraplength=520, justify="left").pack(anchor="w", padx=16, pady=(0, 2))
