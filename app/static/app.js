@@ -100,20 +100,44 @@ function renderChart(canvasId, config, chartRef) {
   return new Chart(canvas, config);
 }
 
+function sessionLabel(a) {
+  if (a.health_status === "healthy") return { text: "Sessão ok", cls: "ok" };
+  if (a.health_status === "pending") return { text: "Aguardando 2FA", cls: "warn" };
+  if (a.has_session === false || a.health_status === "unknown" || a.health_status === "error") {
+    return { text: "Sessão expirada", cls: "bad" };
+  }
+  if (a.health_status === "warning") return { text: "Atenção", cls: "warn" };
+  return { text: a.has_session ? "Sessão ok" : "Sem sessão", cls: a.has_session ? "ok" : "bad" };
+}
+
+function topDayBadge(rank) {
+  if (rank === 1) return "LENDA";
+  if (rank === 2) return "ELITE";
+  if (rank <= 4) return "PRO";
+  return "NOVO";
+}
+
 async function loadDashboard() {
   const grid = document.getElementById("stats-grid");
   if (!grid) return;
   try {
-  const data = await api("/api/dashboard");
+  const days = typeof dashRangeDays === "number" ? dashRangeDays : 7;
+  const data = await api(`/api/dashboard?days=${days}`);
 
-  grid.innerHTML = `
-    <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Contas</div></div>
-    <div class="stat-card"><div class="value">${data.total_posts}</div><div class="label">Posts publicados</div></div>
-    <div class="stat-card"><div class="value">${data.total_errors}</div><div class="label">Erros</div></div>
-    <div class="stat-card"><div class="value">${data.running_loops}</div><div class="label">Loops ativos</div></div>
-    <div class="stat-card"><div class="value">${data.running_recurring || 0}</div><div class="label">Lotes recorrentes</div></div>
-    <div class="stat-card"><div class="value">${data.pending_schedule || 0}</div><div class="label">Agendados</div></div>
-  `;
+  const setText = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+  setText("stat-accounts", data.connected_accounts ?? data.total_accounts ?? 0);
+  setText("stat-comments", data.comments_answered ?? 0);
+  setText("stat-today", data.posts_today ?? 0);
+  setText("stat-rate", `${Number(data.success_rate || 0).toFixed(1)}%`);
+  const badge = document.getElementById("stat-accounts-badge");
+  if (badge) {
+    const n = data.total_accounts || 0;
+    badge.textContent = n ? `+${n} este mês` : "";
+    badge.style.display = n ? "" : "none";
+  }
 
   const storageBanner = document.getElementById("storage-banner");
   if (storageBanner && data.storage) {
@@ -132,14 +156,12 @@ async function loadDashboard() {
       }
       storageBanner.innerHTML = msg;
       storageBanner.classList.remove("hidden");
-    } else if (s.persistent_volume && s.writable && s.database_ok) {
-      storageBanner.className = "notice notice-info";
-      storageBanner.innerHTML = `<strong>Armazenamento persistente:</strong> volume ativo em <code>${s.data_dir}</code> — dados mantidos nos redeploys.`;
+    } else if (s.warning && !s.database_ok) {
+      storageBanner.className = "notice notice-warning";
+      storageBanner.innerHTML = `<strong>Atenção:</strong> ${s.warning}`;
       storageBanner.classList.remove("hidden");
     } else {
-      storageBanner.className = "notice notice-warning";
-      storageBanner.innerHTML = `<strong>Atenção:</strong> ${s.warning || "Configure Postgres (DATABASE_URL) e volume /data na Railway."}`;
-      storageBanner.classList.remove("hidden");
+      storageBanner.classList.add("hidden");
     }
   }
 
@@ -148,96 +170,146 @@ async function loadDashboard() {
     if (banner) {
       banner.className = "notice notice-warning";
       const mins = data.meta_throttle.wait_seconds ? Math.ceil(data.meta_throttle.wait_seconds / 60) : 0;
-      banner.innerHTML = `<strong>Limite da API Meta (app)</strong> — ${data.meta_throttle.wait_reason || "publicações pausadas temporariamente"}${mins ? ` (~${mins} min)` : ""}. Reduza loops simultâneos ou aumente o intervalo entre vídeos (120s+).`;
+      banner.innerHTML = `<strong>Limite da API Meta (app)</strong> — ${data.meta_throttle.wait_reason || "publicações pausadas temporariamente"}${mins ? ` (~${mins} min)` : ""}.`;
       banner.classList.remove("hidden");
     }
   }
 
   postsChart = renderChart("posts-chart", {
-    type: "bar",
+    type: "line",
     data: {
       labels: data.chart?.labels || [],
       datasets: [
         {
-          label: "Sucesso",
+          label: "Publicações",
           data: data.chart?.success || [],
-          backgroundColor: "rgba(34,197,94,0.7)",
-          borderRadius: 6,
-        },
-        {
-          label: "Erros",
-          data: data.chart?.errors || [],
-          backgroundColor: "rgba(239,68,68,0.7)",
-          borderRadius: 6,
+          borderColor: "#e8a838",
+          backgroundColor: "rgba(232,168,56,0.18)",
+          fill: true,
+          tension: 0.35,
+          pointRadius: 3,
+          pointBackgroundColor: "#e8a838",
         },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: "#cbd5e1" } } },
+      plugins: {
+        legend: { labels: { color: "#c9c2b4", boxWidth: 12 } },
+      },
       scales: {
-        x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } },
-        y: { beginAtZero: true, ticks: { color: "#94a3b8", precision: 0 }, grid: { color: "rgba(255,255,255,0.05)" } },
+        x: { ticks: { color: "#8f887c" }, grid: { color: "rgba(255,255,255,0.04)" } },
+        y: { beginAtZero: true, ticks: { color: "#8f887c", precision: 0 }, grid: { color: "rgba(255,255,255,0.04)" } },
       },
     },
   }, postsChart);
 
-  const ss = data.schedule_stats || {};
-  dashScheduleChart = renderChart("schedule-chart", {
-    type: "doughnut",
-    data: {
-      labels: ["Pendentes", "Publicados", "Erros", "Processando"],
-      datasets: [{
-        data: [ss.pending || 0, ss.posted || 0, ss.error || 0, ss.processing || 0],
-        backgroundColor: ["#60a5fa", "#4ade80", "#f87171", "#fbbf24"],
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { position: "bottom", labels: { color: "#cbd5e1" } } },
-    },
-  }, dashScheduleChart);
-
-  const tbody = document.querySelector("#accounts-table tbody");
-  if (tbody) {
-    tbody.innerHTML = data.accounts.map(a => {
-      const fallback = a.fallback_account_id
-        ? data.accounts.find(x => x.id === a.fallback_account_id)?.name || `#${a.fallback_account_id}`
-        : "—";
-      return `
-      <tr>
-        <td><strong>${a.name}</strong><br><span class="hint">@${a.username || "—"}</span></td>
-        <td>${healthBadge(a.health_status)}</td>
-        <td>${a.profile_views.toLocaleString()}</td>
-        <td>${a.total_reach.toLocaleString()}</td>
-        <td>${formatUsageLimit(a.usage.posts_last_24h, a.max_posts_per_day, a.usage.unlimited_day)}</td>
-        <td>${a.loop_running ? '<span class="badge running">Ativo</span>' : "Parado"} (${a.loop_posts})</td>
-        <td>${fallback}</td>
-        <td>${a.proxy_url ? "✓" : "—"}</td>
-      </tr>
-    `}).join("");
+  const autos = document.getElementById("automations-list");
+  if (autos) {
+    const list = data.automations || [];
+    autos.className = list.length ? "auto-list" : "dash-empty";
+    autos.innerHTML = list.length
+      ? list.map(a => `<div class="auto-item"><span>${a.label}</span><strong>${a.posts} posts</strong></div>`).join("")
+      : "Nenhuma automação cadastrada";
   }
 
-  const recent = document.getElementById("recent-posts");
-  if (recent) {
-    const posts = await api("/api/recent-posts");
-    recent.innerHTML = posts.length ? posts.map(p => `
-      <div class="post-log-item">
-        <div>
-          <strong>${p.account}</strong> @${p.username || "—"} — ${p.media_type}
-          <div class="meta">${formatDateTime(p.posted_at)}</div>
-          ${p.caption_preview ? `<div class="meta">${p.caption_preview}</div>` : ""}
-          ${p.status === "error" && p.error_message ? `<div class="error-detail">${p.error_message}</div>` : ""}
-        </div>
-        <span class="status-badge ${p.status === "success" ? "posted" : p.status}">${p.status === "success" ? "OK" : "Erro"}</span>
-      </div>
-    `).join("") : "<p class='hint'>Nenhuma publicação ainda — publique em Publicar, inicie um Loop ou agende vídeos</p>";
+  const upcoming = document.getElementById("upcoming-list");
+  if (upcoming) {
+    const list = data.upcoming || [];
+    upcoming.className = list.length ? "upcoming-list" : "dash-empty";
+    upcoming.innerHTML = list.length
+      ? list.map(u => `
+          <div class="upcoming-item">
+            <div><strong>${u.account}</strong><div class="meta">${u.media_type}</div></div>
+            <span class="meta">${formatDateTime(u.scheduled_at)}</span>
+          </div>`).join("")
+      : "Nenhuma publicação agendada";
+  }
+
+  const activity = document.getElementById("activity-log");
+  if (activity) {
+    const list = data.activity || [];
+    activity.innerHTML = list.length
+      ? list.map(p => `
+          <div class="activity-item">
+            <div class="activity-avatar">${(p.account || "?")[1] || "?"}</div>
+            <div class="activity-body">
+              <strong>${p.account}</strong>
+              <div class="meta">${formatDateTime(p.posted_at)} · ${p.media_type || "REELS"}</div>
+            </div>
+            <span class="pill ${p.status === "success" ? "ok" : "bad"}">${p.status === "success" ? "Sucesso" : "Erro"}</span>
+          </div>`).join("")
+      : `<div class="dash-empty">Nenhuma atividade ainda</div>`;
+  }
+
+  const insights = document.getElementById("insights-box");
+  if (insights) {
+    insights.className = "dash-empty";
+    insights.innerHTML = "Nenhuma conta via API oficial. Local = Phantom / instagrapi.";
+  }
+
+  const top = document.getElementById("top-day");
+  if (top) {
+    const list = data.top_day || [];
+    top.innerHTML = list.length
+      ? list.map((t, i) => {
+          const rank = i + 1;
+          const score = t.posts || t.views || 0;
+          return `
+            <div class="top-day-item ${rank === 1 ? "first" : ""}">
+              <div class="top-day-left">
+                <span class="top-day-rank">#${rank}</span>
+                <div>
+                  <strong>${t.name}</strong>
+                  <div class="meta">@${t.username || "—"}</div>
+                </div>
+              </div>
+              <div class="top-day-right">
+                <span class="pill gold">${topDayBadge(rank)}</span>
+                <strong>${score}</strong>
+              </div>
+            </div>`;
+        }).join("")
+      : `<div class="dash-empty">Sem publicações hoje</div>`;
+  }
+
+  const connected = document.getElementById("connected-accounts");
+  if (connected) {
+    const list = (data.accounts || []).slice(0, 8);
+    connected.innerHTML = list.length
+      ? list.map(a => {
+          const s = sessionLabel(a);
+          return `
+            <div class="connected-item">
+              <div>
+                <strong>@${a.username || a.name}</strong>
+                <div class="meta ${s.cls}">${s.text}</div>
+              </div>
+              <span class="meta">${a.usage?.posts_last_24h ?? 0} posts</span>
+            </div>`;
+        }).join("")
+      : `<div class="dash-empty">Nenhuma conta. <a href="/accounts" class="dash-link">Conectar</a></div>`;
+  }
+
+  const failed = document.getElementById("failed-videos");
+  if (failed) {
+    const list = data.failed || [];
+    failed.className = list.length ? "failed-list" : "dash-empty";
+    failed.innerHTML = list.length
+      ? list.map(f => `
+          <div class="failed-item">
+            <div>
+              <strong>${f.account}</strong>
+              <div class="meta">${formatDateTime(f.posted_at)}</div>
+              ${f.error_message ? `<div class="error-detail">${f.error_message}</div>` : ""}
+            </div>
+            <span class="pill bad">Falha</span>
+          </div>`).join("")
+      : `Nenhuma falha recente. Veja o <a href="/loop" class="dash-link">Log</a>.`;
   }
   } catch (err) {
     console.error("Dashboard:", err);
-    grid.innerHTML = `<div class="stat-card"><div class="value">!</div><div class="label">Erro: ${err.message}</div></div>`;
     toast(err.message || "Erro ao carregar dashboard", "error");
   }
 }

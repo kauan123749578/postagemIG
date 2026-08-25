@@ -1360,7 +1360,7 @@ def recent_posts(db: Session = Depends(get_db)):
 # --- API: Dashboard ---
 
 @app.get("/api/dashboard")
-def dashboard_data(db: Session = Depends(get_db)):
+def dashboard_data(db: Session = Depends(get_db), days: int = 7):
     accounts = scope_accounts(db).all()
     account_ids = scoped_account_ids(db)
     posts_q = db.query(PostLog)
@@ -1378,13 +1378,13 @@ def dashboard_data(db: Session = Depends(get_db)):
     running_loops = loops_q.filter(LoopConfig.is_running.is_(True)).count()
     running_recurring = recurring_q.filter(RecurringBatchConfig.is_running.is_(True)).count()
     pending_schedule = schedule_q.filter(ScheduledPost.status == "pending").count()
-    settings = app_settings.get_all_settings(db)
 
     now = datetime.now(timezone.utc)
+    range_days = max(1, min(int(days or 7), 30))
     chart_days = []
     chart_success = []
     chart_errors = []
-    for i in range(6, -1, -1):
+    for i in range(range_days - 1, -1, -1):
         day = now - timedelta(days=i)
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
@@ -1398,6 +1398,18 @@ def dashboard_data(db: Session = Depends(get_db)):
             .count()
         )
 
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    posts_today = posts_q.filter(
+        PostLog.status == "success", PostLog.posted_at >= today_start
+    ).count()
+    errors_today = posts_q.filter(
+        PostLog.status == "error", PostLog.posted_at >= today_start
+    ).count()
+    today_total = posts_today + errors_today
+    success_rate = round((posts_today / today_total) * 100, 1) if today_total else (
+        round((total_posts / (total_posts + errors)) * 100, 1) if (total_posts + errors) else 0.0
+    )
+
     schedule_stats = {
         "pending": schedule_q.filter(ScheduledPost.status == "pending").count(),
         "posted": schedule_q.filter(ScheduledPost.status == "posted").count(),
@@ -1405,8 +1417,95 @@ def dashboard_data(db: Session = Depends(get_db)):
         "processing": schedule_q.filter(ScheduledPost.status == "processing").count(),
     }
 
+    account_map = {a.id: a for a in accounts}
+    automations = []
+    for loop in loops_q.filter(LoopConfig.is_running.is_(True)).all():
+        acc = account_map.get(loop.account_id)
+        automations.append({
+            "type": "loop",
+            "label": f"Loop · @{acc.username or acc.name}" if acc else f"Loop #{loop.account_id}",
+            "posts": loop.total_posts or 0,
+        })
+    for rec in recurring_q.filter(RecurringBatchConfig.is_running.is_(True)).all():
+        acc = account_map.get(rec.account_id)
+        automations.append({
+            "type": "recurring",
+            "label": f"Lote · @{acc.username or acc.name}" if acc else f"Lote #{rec.account_id}",
+            "posts": rec.total_posts or 0,
+        })
+
+    upcoming = []
+    for sp in (
+        schedule_q.filter(ScheduledPost.status == "pending")
+        .order_by(ScheduledPost.scheduled_at.asc())
+        .limit(6)
+        .all()
+    ):
+        acc = account_map.get(sp.account_id)
+        upcoming.append({
+            "id": sp.id,
+            "account": f"@{acc.username}" if acc and acc.username else (acc.name if acc else "—"),
+            "scheduled_at": sp.scheduled_at.isoformat() if sp.scheduled_at else None,
+            "media_type": sp.media_type or "REELS",
+        })
+
+    recent_logs = (
+        posts_q.order_by(PostLog.posted_at.desc()).limit(12).all()
+    )
+    activity = []
+    failed = []
+    for log in recent_logs:
+        acc = account_map.get(log.account_id)
+        item = {
+            "account": f"@{acc.username}" if acc and acc.username else (acc.name if acc else "—"),
+            "status": log.status,
+            "media_type": log.media_type or "REELS",
+            "posted_at": log.posted_at.isoformat() if log.posted_at else None,
+            "error_message": (log.error_message or "")[:180] if log.status == "error" else None,
+        }
+        activity.append(item)
+        if log.status == "error" and len(failed) < 6:
+            failed.append(item)
+
+    # Top do dia: contas com mais posts de sucesso hoje
+    top_day = []
+    for acc in accounts:
+        count = posts_q.filter(
+            PostLog.account_id == acc.id,
+            PostLog.status == "success",
+            PostLog.posted_at >= today_start,
+        ).count()
+        if count:
+            top_day.append({
+                "name": acc.name or acc.username or f"#{acc.id}",
+                "username": acc.username or "",
+                "posts": count,
+                "views": int(acc.profile_views or 0),
+                "health": acc.health_status or "unknown",
+            })
+    top_day.sort(key=lambda x: (x["posts"], x["views"]), reverse=True)
+    top_day = top_day[:8]
+    if not top_day:
+        # fallback: ranking por views / posts totais
+        for acc in accounts:
+            top_day.append({
+                "name": acc.name or acc.username or f"#{acc.id}",
+                "username": acc.username or "",
+                "posts": int(getattr(acc, "total_posts", 0) or 0),
+                "views": int(acc.profile_views or 0),
+                "health": acc.health_status or "unknown",
+            })
+        top_day.sort(key=lambda x: (x["views"], x["posts"]), reverse=True)
+        top_day = top_day[:8]
+
+    connected = sum(1 for a in accounts if (a.session_json or "").strip())
+
     return {
         "total_accounts": len(accounts),
+        "connected_accounts": connected,
+        "posts_today": posts_today,
+        "success_rate": success_rate,
+        "comments_answered": 0,
         "total_posts": total_posts,
         "total_errors": errors,
         "running_loops": running_loops,
@@ -1416,6 +1515,11 @@ def dashboard_data(db: Session = Depends(get_db)):
         "storage": get_storage_status(db),
         "meta_throttle": meta_throttle_status(),
         "accounts": [_account_dict(a, db) for a in accounts],
-        "chart": {"labels": chart_days, "success": chart_success, "errors": chart_errors},
+        "chart": {"labels": chart_days, "success": chart_success, "errors": chart_errors, "days": range_days},
         "schedule_stats": schedule_stats,
+        "automations": automations,
+        "upcoming": upcoming,
+        "activity": activity,
+        "failed": failed,
+        "top_day": top_day,
     }

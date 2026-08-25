@@ -27,11 +27,11 @@ class Account(Base):
     password_enc: Mapped[str] = mapped_column(Text, default="")
     session_json: Mapped[str] = mapped_column(Text, default="")
     proxy_url: Mapped[str] = mapped_column(String(512), default="")
-    # Legados da Meta API (mantidos nuláveis só por compatibilidade do banco)
-    ig_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    graph_api_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default="v21.0")
-    graph_host: Mapped[str | None] = mapped_column(String(64), nullable=True, default="graph.facebook.com")
+    # Legados da Meta API — instagrapi não usa; string vazia evita NOT NULL no SQLite
+    ig_user_id: Mapped[str] = mapped_column(String(64), default="")
+    access_token: Mapped[str] = mapped_column(Text, default="")
+    graph_api_version: Mapped[str] = mapped_column(String(16), default="v21.0")
+    graph_host: Mapped[str] = mapped_column(String(64), default="graph.facebook.com")
 
     max_posts_per_day: Mapped[int] = mapped_column(Integer, default=0)
     max_posts_per_hour: Mapped[int] = mapped_column(Integer, default=0)

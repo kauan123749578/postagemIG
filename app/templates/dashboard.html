@@ -1,67 +1,156 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — Postagem IG{% endblock %}
 {% block content %}
-<div class="page-header">
-  <div>
-    <h1>Dashboard</h1>
-    <p class="subtitle">Monitoramento em tempo real — servidor na nuvem, loops e agendamentos 24/7</p>
-  </div>
-  <button class="btn primary" onclick="refreshAllInsights()">Atualizar insights</button>
-</div>
-
-<div class="notice notice-info">
-  <strong>Limite da Meta:</strong> ~<strong>100 posts/24h</strong> por conta via API — não alterável pelo painel.
-</div>
-
 <div id="storage-banner" class="hidden"></div>
 
-<div class="stats-grid" id="stats-grid"></div>
+<div class="dash-stats" id="stats-grid">
+  <div class="dash-stat">
+    <div class="dash-stat-icon">👤</div>
+    <div class="dash-stat-body">
+      <div class="dash-stat-value" id="stat-accounts">—</div>
+      <div class="dash-stat-label">Contas conectadas</div>
+      <div class="dash-stat-badge" id="stat-accounts-badge"></div>
+    </div>
+  </div>
+  <div class="dash-stat">
+    <div class="dash-stat-icon">💬</div>
+    <div class="dash-stat-body">
+      <div class="dash-stat-value" id="stat-comments">0</div>
+      <div class="dash-stat-label">Comentários respondidos</div>
+    </div>
+  </div>
+  <div class="dash-stat">
+    <div class="dash-stat-icon">🎬</div>
+    <div class="dash-stat-body">
+      <div class="dash-stat-value" id="stat-today">—</div>
+      <div class="dash-stat-label">Publicações hoje</div>
+    </div>
+  </div>
+  <div class="dash-stat">
+    <div class="dash-stat-icon">📈</div>
+    <div class="dash-stat-body">
+      <div class="dash-stat-value" id="stat-rate">—</div>
+      <div class="dash-stat-label">Taxa de sucesso</div>
+    </div>
+  </div>
+</div>
 
-<div class="grid-2">
-  <section class="card glass glow">
-    <h2>Publicações — últimos 7 dias</h2>
-    <div class="chart-wrap">
+<div class="dash-mid">
+  <section class="card glass dash-card dash-perf">
+    <div class="dash-card-head">
+      <div>
+        <h2>Seu Desempenho</h2>
+        <p class="dash-card-sub" id="perf-range-label">ÚLTIMOS 7 DIAS</p>
+      </div>
+      <div class="seg-btns" id="perf-range">
+        <button type="button" class="seg active" data-days="7">7D</button>
+        <button type="button" class="seg" data-days="15">15D</button>
+        <button type="button" class="seg" data-days="30">30D</button>
+      </div>
+    </div>
+    <div class="chart-wrap chart-wrap--tall">
       <canvas id="posts-chart"></canvas>
     </div>
   </section>
-  <section class="card glass glow">
-    <h2>Agendamentos</h2>
-    <div class="chart-wrap">
-      <canvas id="schedule-chart"></canvas>
+
+  <section class="card glass dash-card">
+    <div class="dash-card-head">
+      <h2>Automações ativas</h2>
+      <a href="/loop" class="dash-link">Ver todas</a>
     </div>
+    <div id="automations-list" class="dash-empty">Nenhuma automação cadastrada</div>
+  </section>
+
+  <section class="card glass dash-card">
+    <div class="dash-card-head">
+      <h2>Próximas publicações</h2>
+      <a href="/schedule" class="dash-link">Agenda</a>
+    </div>
+    <div id="upcoming-list" class="dash-empty">Nenhuma publicação agendada</div>
   </section>
 </div>
 
-<section class="card glass glow">
-  <h2>Contas</h2>
-  <div class="table-wrap">
-    <table id="accounts-table">
-      <thead>
-        <tr>
-          <th>Conta</th>
-          <th>Saúde</th>
-          <th>Views</th>
-          <th>Alcance</th>
-          <th>Posts 24h</th>
-          <th>Loop</th>
-          <th>Contingência</th>
-          <th>Proxy</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
+<div class="dash-bottom">
+  <section class="card glass dash-card">
+    <div class="dash-card-head">
+      <div>
+        <h2>Log de atividades</h2>
+        <p class="dash-card-sub">TEMPO REAL</p>
+      </div>
+      <a href="/loop" class="dash-link">Ver todos</a>
+    </div>
+    <div id="activity-log" class="activity-list"></div>
+  </section>
 
-<section class="card glass glow">
-  <h2>Publicações e erros recentes</h2>
-  <div id="recent-posts"></div>
-</section>
+  <section class="card glass dash-card">
+    <div class="dash-card-head">
+      <div>
+        <h2>Insights API oficial</h2>
+        <p class="dash-card-sub">SEGUIDORES + VIEWS REELS (7D)</p>
+      </div>
+      <a href="/accounts" class="dash-link">Ver detalhes</a>
+    </div>
+    <div id="insights-box" class="dash-empty">
+      Local usa Phantom / instagrapi. Insights Meta ficam no modo API oficial.
+    </div>
+  </section>
+
+  <section class="card glass dash-card dash-topday">
+    <div class="dash-card-head">
+      <div>
+        <h2>👑 Top do Dia</h2>
+        <p class="dash-card-sub">PUBLICAÇÕES DE HOJE (BRT)</p>
+      </div>
+    </div>
+    <div id="top-day" class="top-day-list"></div>
+  </section>
+</div>
+
+<div class="dash-footer-row">
+  <section class="card glass dash-card">
+    <div class="dash-card-head">
+      <h2>Contas conectadas</h2>
+      <a href="/accounts" class="dash-link">Gerenciar</a>
+    </div>
+    <div id="connected-accounts" class="connected-list"></div>
+  </section>
+
+  <section class="card glass dash-card">
+    <div class="dash-card-head">
+      <div>
+        <h2>Vídeos que falharam</h2>
+        <p class="dash-card-sub">ÚLTIMAS FALHAS</p>
+      </div>
+      <button type="button" class="dash-link" onclick="loadDashboard()">Ver logs</button>
+    </div>
+    <div id="failed-videos" class="dash-empty">Nenhuma falha recente.</div>
+  </section>
+
+  <section class="card glass dash-card dash-cta">
+    <h2>Publicar Reels</h2>
+    <p class="hint">Conecte a conta e poste um Reel agora, ou use o lote com capa única.</p>
+    <div class="hero-actions">
+      <a href="/accounts" class="btn primary">Conectar conta</a>
+      <a href="/publish" class="btn secondary">Publicar 1×</a>
+      <a href="/loop" class="btn ghost">Reels em lote</a>
+    </div>
+  </section>
+</div>
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
+  let dashRangeDays = 7;
+  document.getElementById("perf-range")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".seg");
+    if (!btn) return;
+    dashRangeDays = Number(btn.dataset.days) || 7;
+    document.querySelectorAll("#perf-range .seg").forEach(b => b.classList.toggle("active", b === btn));
+    const label = document.getElementById("perf-range-label");
+    if (label) label.textContent = `ÚLTIMOS ${dashRangeDays} DIAS`;
+    loadDashboard();
+  });
   initDashboard();
-  setInterval(loadDashboard, 8000);
+  setInterval(loadDashboard, 10000);
 </script>
 {% endblock %}

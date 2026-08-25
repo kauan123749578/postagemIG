@@ -64,16 +64,64 @@ def _friendly(exc: Exception) -> str:
 from core.proxy import normalize_proxy_url
 
 
-def build_client(proxy_url: str | None = None, settings: dict | None = None, account_id: int | None = None):
+def _ensure_phantom_path() -> None:
+    """Garante que a pasta phantom/ (irmã de instagramm/) está no sys.path."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]  # postagemIG/
+    root_s = str(root)
+    if root_s not in sys.path:
+        sys.path.insert(0, root_s)
+
+
+def _new_client():
+    """EnhancedClient (Phantom) com fallback para Client stock."""
     from instagrapi import Client
 
-    cl = Client()
+    _ensure_phantom_path()
+    try:
+        from phantom import EnhancedClient
+
+        cl = EnhancedClient(debug=False, auto_track_nav=True)
+        logger.info("Cliente = Phantom EnhancedClient (TLS + headers + CAA)")
+        return cl
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Phantom indisponível (%s) — usando Client stock", exc)
+        return Client()
+
+
+def build_client(proxy_url: str | None = None, settings: dict | None = None, account_id: int | None = None):
+    from core.device import apply_samsung_device
+
+    cl = _new_client()
     cl.delay_range = [2, 5]
     if settings:
+        # Fluxo 2FA / sessão salva: NÃO troca o device (senão o código 2FA falha)
         try:
             cl.set_settings(settings)
         except Exception:  # noqa: BLE001
             logger.warning("Não foi possível carregar settings de sessão")
+        # Reforça headers Phantom após set_settings
+        if hasattr(cl, "_header_builder"):
+            cl._header_builder = None
+    else:
+        # Login novo: Samsung SM-E045F (não Pixel 8 Pro padrão do instagrapi)
+        try:
+            from phantom.device import apply_samsung_device as apply_ph
+
+            apply_ph(cl)
+        except Exception:  # noqa: BLE001
+            apply_samsung_device(cl)
+        try:
+            cl.set_locale("pt_BR")
+            cl.set_country("BR")
+            cl.set_country_code(55)
+            cl.set_timezone_offset(-3 * 60 * 60)
+        except Exception:  # noqa: BLE001
+            pass
+        if hasattr(cl, "_header_builder"):
+            cl._header_builder = None
     if proxy_url and proxy_url.strip():
         normalized = normalize_proxy_url(proxy_url)
         try:

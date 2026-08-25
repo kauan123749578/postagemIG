@@ -1,5 +1,6 @@
 .env
 data/
+criar-contas-ig/
 .venv/
 venv/
 __pycache__/

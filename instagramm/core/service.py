@@ -75,12 +75,21 @@ def setup() -> None:
 
 
 def _export_session_file(username: str, settings: dict) -> None:
-    """Salva a sessão também como arquivo em data/sessions (além do banco)."""
+    """Salva a sessão em data/sessions/{username}.json e também session.json (última)."""
     try:
         if not username:
             return
         safe = "".join(c for c in username if c.isalnum() or c in "._-") or "conta"
-        (SESSIONS_DIR / f"{safe}.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        payload = json.dumps(settings, indent=2, ensure_ascii=False)
+        path = SESSIONS_DIR / f"{safe}.json"
+        path.write_text(payload, encoding="utf-8")
+        # Cópia conveniente com o nome que a galera procura
+        (SESSIONS_DIR / "session.json").write_text(payload, encoding="utf-8")
+        # Também na pasta do app (instagramm/session.json) — .gitignore já ignora
+        from core.config import BASE_DIR
+
+        (BASE_DIR / "session.json").write_text(payload, encoding="utf-8")
+        logging.getLogger("service").info("Sessão salva: %s", path)
     except Exception:  # noqa: BLE001
         pass
 
@@ -266,10 +275,13 @@ def connect_account(
         # reaproveita device da 1ª tentativa quando enviando o código 2FA
         settings = _pending_2fa.get(account_id)
         if not settings and acc.session_json and not sid_input:
-            try:
-                settings = json.loads(acc.session_json)
-            except json.JSONDecodeError:
-                settings = None
+            # Login com senha do zero → NÃO reusa sessão Pixel antiga (Samsung novo)
+            # Só reusa arquivo se for sessionid/check sem senha, ou 2FA sem pending
+            if verification_code or not pwd:
+                try:
+                    settings = json.loads(acc.session_json)
+                except json.JSONDecodeError:
+                    settings = None
 
         if verification_code:
             _pending_verify[account_id] = verification_code.strip()

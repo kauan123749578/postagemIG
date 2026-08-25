@@ -98,15 +98,26 @@ def migrate_schema() -> None:
     if account_cols and "session_json" not in account_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE accounts ADD COLUMN session_json TEXT DEFAULT ''"))
-    # instagrapi não usa ig_user_id/access_token — libera NOT NULL legado (Postgres)
-    if account_cols and IS_POSTGRES:
-        for legacy_col in ("ig_user_id", "access_token", "graph_api_version", "graph_host"):
-            if legacy_col in account_cols:
-                try:
-                    with engine.begin() as conn:
+    # instagrapi não usa ig_user_id/access_token — normaliza legado Meta API
+    if account_cols:
+        legacy_defaults = {
+            "ig_user_id": "''",
+            "access_token": "''",
+            "graph_api_version": "'v21.0'",
+            "graph_host": "'graph.facebook.com'",
+        }
+        with engine.begin() as conn:
+            for legacy_col, default_sql in legacy_defaults.items():
+                if legacy_col not in account_cols:
+                    continue
+                if IS_POSTGRES:
+                    try:
                         conn.execute(text(f"ALTER TABLE accounts ALTER COLUMN {legacy_col} DROP NOT NULL"))
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
+                conn.execute(
+                    text(f"UPDATE accounts SET {legacy_col} = {default_sql} WHERE {legacy_col} IS NULL")
+                )
     if account_cols and "owner_user_id" not in account_cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE accounts ADD COLUMN owner_user_id INTEGER"))
