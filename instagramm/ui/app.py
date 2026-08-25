@@ -179,7 +179,7 @@ class App(ctk.CTk):
             active = k == key
             btn.configure(
                 fg_color=theme.PRIMARY_SOFT if active else "transparent",
-                text_color="#ffffff" if active else theme.TEXT_SOFT,
+                text_color=theme.PRIMARY if active else theme.TEXT_SOFT,
             )
             self._nav_accents[k].configure(fg_color=theme.PRIMARY if active else "transparent")
 

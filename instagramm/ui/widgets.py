@@ -4,8 +4,11 @@ import customtkinter as ctk
 from ui import theme
 
 
-def soft_scrollable(master, **kwargs):
-    """CTkScrollableFrame com roda do mouse mais leve (menos 'duro')."""
+def soft_scrollable(master, *, speed: float = 0.18, **kwargs):
+    """CTkScrollableFrame com roda do mouse rápida (poucos notches = desce bastante).
+
+    speed: fração da página por notch (~0.18 = ~5 notches no conteúdo longo).
+    """
     opts = dict(
         fg_color="transparent",
         scrollbar_button_color=theme.CARD3,
@@ -15,18 +18,18 @@ def soft_scrollable(master, **kwargs):
     frame = ctk.CTkScrollableFrame(master, **opts)
     canvas = frame._parent_canvas  # noqa: SLF001
     try:
-        canvas.configure(yscrollincrement=8)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        frame._scrollbar.configure(width=14)  # noqa: SLF001
+        frame._scrollbar.configure(width=12)  # noqa: SLF001
     except Exception:  # noqa: BLE001
         pass
 
     def _wheel(event):
-        # Windows: delta ±120; passos menores = scroll fluido
-        steps = int(-1 * (event.delta / 40)) or (-1 if event.delta > 0 else 1)
-        canvas.yview_scroll(steps, "units")
+        # Um notch move uma fatia grande da página (não 1 unitinho)
+        direction = -1 if event.delta > 0 else 1
+        # Windows às vezes manda ±240 etc.
+        notches = max(1, abs(int(event.delta / 120)) or 1)
+        amount = direction * speed * notches
+        top, _bottom = canvas.yview()
+        canvas.yview_moveto(max(0.0, min(1.0, top + amount)))
         return "break"
 
     def _enter(_event):
@@ -98,7 +101,7 @@ def primary_button(master, text, command, **kwargs):
     kwargs.setdefault("font", (theme.FONT, 13, "bold"))
     return ctk.CTkButton(
         master, text=text, command=command,
-        fg_color=theme.PRIMARY, hover_color=theme.PRIMARY_HOVER, text_color="#ffffff",
+        fg_color=theme.PRIMARY, hover_color=theme.PRIMARY_HOVER, text_color="#0a0a0a",
         **kwargs,
     )
 

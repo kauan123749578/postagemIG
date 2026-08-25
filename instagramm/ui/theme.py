@@ -1,30 +1,30 @@
-"""Paleta e helpers visuais do painel (tema dark premium: preto / azul / branco)."""
+"""Paleta e helpers visuais — tema preto + dourado."""
 
-# fundos quase pretos, com camadas sutis
-BG = "#04060a"
-SIDEBAR = "#070910"
-CARD = "#0b0e16"
-CARD2 = "#10141e"
-CARD3 = "#161c29"
-BORDER = "#1c2433"
-BORDER_SOFT = "#141a26"
+# fundos pretos em camadas
+BG = "#050505"
+SIDEBAR = "#0a0a0a"
+CARD = "#111111"
+CARD2 = "#181818"
+CARD3 = "#222222"
+BORDER = "#2e2e2e"
+BORDER_SOFT = "#1c1c1c"
 
-# azul como cor de destaque (+ tom suave para realces)
-PRIMARY = "#2f6bff"
-PRIMARY_HOVER = "#2456d6"
-PRIMARY_SOFT = "#13203c"
-PINK = "#3b82f6"
-ACCENT = "#4f9bff"
-ACCENT_2 = "#22d3ee"
+# dourado como destaque
+PRIMARY = "#d4af37"
+PRIMARY_HOVER = "#b8962e"
+PRIMARY_SOFT = "#2a220e"
+PINK = "#e0c15a"
+ACCENT = "#e8c547"
+ACCENT_2 = "#c9a227"
 
 # textos
-TEXT = "#e7ecf5"
-TEXT_SOFT = "#aab3c5"
-MUTED = "#5e6878"
+TEXT = "#f2f2f2"
+TEXT_SOFT = "#b8b8b8"
+MUTED = "#6e6e6e"
 
-SUCCESS = "#2ea043"
+SUCCESS = "#3d9a55"
 SUCCESS_SOFT = "#0f2418"
-WARNING = "#d29a1e"
+WARNING = "#d4af37"
 WARNING_SOFT = "#2a2110"
 DANGER = "#e5484d"
 DANGER_HOVER = "#a01f23"

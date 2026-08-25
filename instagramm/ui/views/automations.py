@@ -34,7 +34,7 @@ class AutomationsView(BaseView):
             "Crie como no Instablack: legenda fixa, vários Reels, uma capa e anti-farm entre contas",
         ).pack(anchor="w", pady=(0, 12))
 
-        self.scroll = widgets.soft_scrollable(self)
+        self.scroll = widgets.soft_scrollable(self, speed=0.28)
         self.scroll.pack(fill="both", expand=True)
 
         self._build_form()

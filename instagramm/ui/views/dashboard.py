@@ -11,14 +11,16 @@ from ui.views.base import BaseView
 class DashboardView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
-        widgets.title(self, "Dashboard", size=24).pack(anchor="w")
-        widgets.subtitle(self, "Visão geral e atividade das automações").pack(anchor="w", pady=(0, 14))
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(5, weight=1)
 
-        self.scroll = widgets.soft_scrollable(self)
-        self.scroll.pack(fill="both", expand=True)
+        widgets.title(self, "Dashboard", size=24).grid(row=0, column=0, sticky="w")
+        widgets.subtitle(self, "Visão geral e atividade das automações").grid(
+            row=1, column=0, sticky="w", pady=(0, 14)
+        )
 
-        self.cards_frame = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        self.cards_frame.pack(fill="x")
+        self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.cards_frame.grid(row=2, column=0, sticky="ew")
         for i in range(4):
             self.cards_frame.grid_columnconfigure(i, weight=1)
         self.stat_cards = {}
@@ -39,27 +41,32 @@ class DashboardView(BaseView):
             self.stat_cards[key] = value
 
         self.activity_card, self.activity_body = widgets.section(
-            self.scroll,
+            self,
             "Atividade agora",
             "Automações em execução",
             icon="🟢",
         )
-        self.activity_card.pack(fill="x", pady=(16, 0))
+        self.activity_card.grid(row=3, column=0, sticky="ew", pady=(16, 0))
 
-        charts = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        charts.pack(fill="x", pady=(16, 0))
+        charts = ctk.CTkFrame(self, fg_color="transparent")
+        charts.grid(row=4, column=0, sticky="ew", pady=(16, 0))
         charts.grid_columnconfigure(0, weight=1)
         charts.grid_columnconfigure(1, weight=1)
-        self.chart_posts = BarChart(charts, "Publicações (7 dias)", color=theme.ACCENT)
+        self.chart_posts = BarChart(charts, "Publicações (7 dias)", color=theme.ACCENT, height=150)
         self.chart_posts.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self.chart_errors = BarChart(charts, "Erros (7 dias)", color=theme.DANGER)
+        self.chart_errors = BarChart(charts, "Erros (7 dias)", color=theme.DANGER, height=150)
         self.chart_errors.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
-        logcard = widgets.card(self.scroll)
-        logcard.pack(fill="both", expand=True, pady=(16, 0))
-        widgets.title(logcard, "Últimas publicações", size=14).pack(anchor="w", padx=18, pady=(14, 6))
-        self.log_frame = ctk.CTkScrollableFrame(logcard, fg_color="transparent", height=220)
-        self.log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        # Card com scroll interno (página não scrolla)
+        logcard = widgets.card(self)
+        logcard.grid(row=5, column=0, sticky="nsew", pady=(16, 0))
+        logcard.grid_columnconfigure(0, weight=1)
+        logcard.grid_rowconfigure(1, weight=1)
+        widgets.title(logcard, "Últimas publicações", size=14).grid(
+            row=0, column=0, sticky="w", padx=18, pady=(14, 6)
+        )
+        self.log_frame = widgets.soft_scrollable(logcard, speed=0.22)
+        self.log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 12))
 
     def on_show(self):
         self._reload()
