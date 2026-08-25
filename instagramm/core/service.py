@@ -507,6 +507,102 @@ def import_image(src: str) -> str:
     return _import_file(src, IMAGES_DIR, IMAGE_EXTENSIONS)
 
 
+def update_account_profile(
+    account_id: int,
+    *,
+    biography: str | None = None,
+    picture_path: str | None = None,
+) -> dict:
+    """Atualiza bio e/ou foto de perfil de uma conta conectada."""
+    with session_scope() as db:
+        acc = db.get(Account, account_id)
+        if not acc:
+            return {"ok": False, "message": "Conta não encontrada"}
+        if not acc.session_json or acc.status != "healthy":
+            return {"ok": False, "message": "Conta precisa estar conectada (sessão válida)"}
+        try:
+            local_pic = None
+            if picture_path:
+                src = Path(picture_path)
+                if src.exists() and src.resolve().parent == IMAGES_DIR.resolve():
+                    local_pic = str(src)
+                else:
+                    local_pic = import_image(picture_path)
+
+            result = ig.update_profile(
+                acc,
+                biography=biography,
+                picture_path=local_pic,
+            )
+            if result.get("settings"):
+                acc.session_json = json.dumps(result["settings"])
+                _export_session_file(acc.username, result["settings"])
+            parts = result.get("changed") or []
+            msg = "Perfil atualizado: " + " + ".join(parts) if parts else "Perfil atualizado"
+            notify.log_event(msg, "success", acc.name)
+            return {"ok": True, "message": msg, "changed": parts}
+        except ig.InstagramError as exc:
+            msg = str(exc)
+            if _is_session_expired_message(msg) or getattr(exc, "kind", "") == "login_required":
+                _mark_session_expired(db, acc, msg)
+            else:
+                notify.log_event(f"Falha ao editar perfil: {msg}", "error", acc.name)
+            return {"ok": False, "message": msg}
+
+
+def bulk_update_profiles(
+    account_ids: list[int],
+    *,
+    picture_paths: list[str] | None = None,
+    biography: str | None = None,
+    biographies: list[str] | None = None,
+) -> dict:
+    """Aplica foto/bio em várias contas.
+
+    - Fotos: 1ª conta ← 1ª foto, 2ª ← 2ª… se houver menos fotos, repete em ciclo.
+    - Bio única (`biography`) para todas, OU lista `biographies` na ordem das contas.
+    """
+    ids = [int(x) for x in (account_ids or [])]
+    if not ids:
+        return {"ok": False, "message": "Selecione pelo menos uma conta", "results": []}
+
+    pics = [p for p in (picture_paths or []) if p and Path(p).exists()]
+    bios_list = [str(b).strip() for b in (biographies or []) if str(b).strip()]
+    shared_bio = None if biography is None else str(biography).strip()
+
+    if not pics and shared_bio is None and not bios_list:
+        return {"ok": False, "message": "Informe fotos e/ou bio", "results": []}
+
+    results = []
+    ok_n = 0
+    for i, acc_id in enumerate(ids):
+        pic = pics[i % len(pics)] if pics else None
+        if bios_list:
+            bio = bios_list[i] if i < len(bios_list) else bios_list[-1]
+        else:
+            bio = shared_bio
+        # Se só tem fotos sem bio, biography=None; se só bio, picture=None
+        res = update_account_profile(
+            acc_id,
+            biography=bio,
+            picture_path=pic,
+        )
+        results.append({"account_id": acc_id, **res})
+        if res.get("ok"):
+            ok_n += 1
+        # leve pausa entre contas (anti-spam)
+        if i < len(ids) - 1:
+            time.sleep(2.5)
+
+    return {
+        "ok": ok_n > 0,
+        "message": f"{ok_n}/{len(ids)} conta(s) atualizada(s)",
+        "ok_count": ok_n,
+        "total": len(ids),
+        "results": results,
+    }
+
+
 def list_media() -> dict:
     def _scan(folder: Path) -> list[dict]:
         items = []

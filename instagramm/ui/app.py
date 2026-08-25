@@ -12,6 +12,7 @@ from ui.views.accounts import AccountsView
 from ui.views.automations import AutomationsView
 from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
+from ui.views.profile import ProfileView
 from ui.views.publish import PublishView
 from ui.views.settings import SettingsView
 from ui.views.stories import StoriesView
@@ -19,6 +20,7 @@ from ui.views.stories import StoriesView
 NAV = [
     ("dashboard", "  📊  Dashboard"),
     ("accounts", "  👤  Contas"),
+    ("profile", "  🖼️  Perfil"),
     ("automations", "  ⚡  Automações"),
     ("stories", "  📸  Stories"),
     ("publish", "  🚀  Publicar"),
@@ -29,6 +31,7 @@ NAV = [
 VIEW_CLASSES = {
     "dashboard": DashboardView,
     "accounts": AccountsView,
+    "profile": ProfileView,
     "automations": AutomationsView,
     "stories": StoriesView,
     "publish": PublishView,

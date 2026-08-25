@@ -195,12 +195,23 @@ class AccountsView(BaseView):
         ctk.CTkButton(actions, text="Proxy", height=34, width=72, corner_radius=10, fg_color="transparent",
                       border_width=1, border_color=theme.PRIMARY, text_color=theme.PRIMARY, hover_color=theme.PRIMARY_SOFT,
                       command=lambda a=acc: self._edit_proxy(a)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(actions, text="Perfil", height=34, width=72, corner_radius=10, fg_color="transparent",
+                      border_width=1, border_color=theme.PRIMARY, text_color=theme.PRIMARY, hover_color=theme.PRIMARY_SOFT,
+                      command=lambda a=acc: self._edit_profile(a)).pack(side="left", padx=(0, 6))
         widgets.danger_button(actions, "Excluir", lambda a=acc: self._delete(a)).pack(side="left")
 
     def _edit_proxy(self, acc):
         from ui.proxy_dialog import ProxyDialog
 
         ProxyDialog(self.app, acc, on_saved=self._reload)
+
+    def _edit_profile(self, acc):
+        if acc.get("status") != "healthy" or not acc.get("has_session"):
+            self.app.toast("Conecte a conta antes de editar foto/bio", "error")
+            return
+        from ui.profile_dialog import ProfileDialog
+
+        ProfileDialog(self.app, acc, on_saved=self._reload)
 
     def _read_form(self):
         return {

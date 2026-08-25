@@ -685,3 +685,57 @@ def post_story(
         "settings": settings,
         "kind": kind,
     }
+
+BIO_MAX_LEN = 150
+
+
+def update_profile(
+    account,
+    *,
+    biography: str | None = None,
+    picture_path: str | None = None,
+) -> dict[str, Any]:
+    """Atualiza bio e/ou foto de perfil via instagrapi."""
+    bio = None if biography is None else str(biography).strip()
+    pic = Path(picture_path) if picture_path else None
+
+    if bio is None and not pic:
+        raise InstagramError("Informe a bio e/ou a foto de perfil.")
+    if bio is not None and len(bio) > BIO_MAX_LEN:
+        raise InstagramError(f"Bio com no máximo {BIO_MAX_LEN} caracteres (agora: {len(bio)}).")
+    if pic is not None:
+        if not pic.exists():
+            raise InstagramError(f"Foto não encontrada: {picture_path}")
+        if pic.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+            raise InstagramError("Use jpg, png ou webp para a foto de perfil.")
+
+    changed: list[str] = []
+
+    def work(cl):
+        out: dict[str, Any] = {}
+        if bio is not None:
+            ok = cl.account_set_biography(bio)
+            if not ok:
+                cl.account_edit(biography=bio)
+            out["biography"] = bio
+            changed.append("bio")
+        if pic is not None:
+            user = cl.account_change_picture(pic)
+            out["picture_ok"] = True
+            out["username"] = getattr(user, "username", "") or ""
+            changed.append("foto")
+        return out
+
+    try:
+        result, settings = _run_authed(account, work)
+    except InstagramError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        kind = "login_required" if _needs_relogin(exc) else "error"
+        raise InstagramError(_friendly(exc), kind=kind) from exc
+
+    return {
+        **result,
+        "changed": changed,
+        "settings": settings,
+    }
