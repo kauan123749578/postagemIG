@@ -14,7 +14,6 @@ from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
 from ui.views.media import MediaView
 from ui.views.publish import PublishView
-from ui.views.schedule import ScheduleView
 from ui.views.settings import SettingsView
 
 NAV = [
@@ -22,7 +21,6 @@ NAV = [
     ("accounts", "  👤  Contas"),
     ("automations", "  ⚡  Automações"),
     ("publish", "  🚀  Publicar"),
-    ("schedule", "  ⏰  Agendamentos"),
     ("media", "  🎬  Mídia"),
     ("logs", "  📜  Logs"),
     ("settings", "  ⚙️  Configurações"),
@@ -33,7 +31,6 @@ VIEW_CLASSES = {
     "accounts": AccountsView,
     "automations": AutomationsView,
     "publish": PublishView,
-    "schedule": ScheduleView,
     "media": MediaView,
     "logs": LogsView,
     "settings": SettingsView,

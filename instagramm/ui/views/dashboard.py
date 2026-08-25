@@ -14,12 +14,12 @@ class DashboardView(BaseView):
         widgets.title(self, "Dashboard", size=24).pack(anchor="w")
         widgets.subtitle(self, "Visão geral e atividade das automações").pack(anchor="w", pady=(0, 14))
 
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll = widgets.soft_scrollable(self)
         self.scroll.pack(fill="both", expand=True)
 
         self.cards_frame = ctk.CTkFrame(self.scroll, fg_color="transparent")
         self.cards_frame.pack(fill="x")
-        for i in range(5):
+        for i in range(4):
             self.cards_frame.grid_columnconfigure(i, weight=1)
         self.stat_cards = {}
         specs = [
@@ -27,7 +27,6 @@ class DashboardView(BaseView):
             ("automations_active", "Automações ativas", theme.PRIMARY),
             ("jobs_pending", "Posts na fila", theme.WARNING),
             ("posts_24h", "Posts (24h)", theme.ACCENT),
-            ("scheduled_pending", "Agendados", theme.MUTED),
         ]
         for i, (key, label, color) in enumerate(specs):
             card = widgets.card(self.cards_frame, fg_color=theme.CARD)
@@ -98,7 +97,6 @@ class DashboardView(BaseView):
         self.stat_cards["automations_active"].configure(text=str(stats.get("automations_active", 0)))
         self.stat_cards["jobs_pending"].configure(text=str(stats.get("jobs_pending", 0)))
         self.stat_cards["posts_24h"].configure(text=str(stats["posts_24h"]))
-        self.stat_cards["scheduled_pending"].configure(text=str(stats["scheduled_pending"]))
 
     def _render_charts(self, data):
         self.chart_posts.set_data(data["posts"])

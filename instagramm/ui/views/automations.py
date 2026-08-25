@@ -34,11 +34,10 @@ class AutomationsView(BaseView):
             "Crie como no Instablack: legenda fixa, vários Reels, uma capa e anti-farm entre contas",
         ).pack(anchor="w", pady=(0, 12))
 
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll = widgets.soft_scrollable(self)
         self.scroll.pack(fill="both", expand=True)
 
         self._build_form()
-        self._build_list()
 
     # ---------- form ----------
     def _build_form(self):
@@ -162,7 +161,7 @@ class AutomationsView(BaseView):
         acard, abody = widgets.section(
             self.scroll,
             "Contas",
-            "Quem recebe as publicações (opcional no rascunho)",
+            "Quem recebe as publicações",
             icon="👥",
         )
         acard.pack(fill="x", pady=(0, 12))
@@ -180,18 +179,8 @@ class AutomationsView(BaseView):
         self.accounts_list.pack(fill="x")
 
         widgets.primary_button(
-            self.scroll, "Criar automação", self._create, height=48,
-        ).pack(fill="x", pady=(4, 20))
-
-    def _build_list(self):
-        lcard, lbody = widgets.section(
-            self.scroll,
-            "Automações criadas",
-            "Ative, pause ou remova",
-            icon="📋",
-        )
-        lcard.pack(fill="x", pady=(0, 20))
-        self.list_body = lbody
+            self.scroll, "Criar e ativar automação", self._create, height=48,
+        ).pack(fill="x", pady=(4, 28))
 
     # ---------- picks ----------
     def _pick_videos(self):
@@ -315,7 +304,7 @@ class AutomationsView(BaseView):
             var.set(False)
         self._update_account_count()
 
-    # ---------- create / list ----------
+    # ---------- create ----------
     def _interval_minutes(self) -> int:
         label = self.interval_var.get()
         for name, mins in INTERVAL_OPTIONS:
@@ -331,6 +320,10 @@ class AutomationsView(BaseView):
         if not self.videos:
             self.app.toast("Selecione pelo menos um vídeo", "error")
             return
+        account_ids = self._selected_account_ids()
+        if not account_ids:
+            self.app.toast("Selecione pelo menos uma conta", "error")
+            return
         try:
             smin = int(self.min_entry.get().strip() or "2")
             smax = int(self.max_entry.get().strip() or "8")
@@ -343,7 +336,7 @@ class AutomationsView(BaseView):
             caption=caption,
             videos=list(self.videos),
             cover_path=self.cover_path,
-            account_ids=self._selected_account_ids(),
+            account_ids=account_ids,
             interval_minutes=self._interval_minutes(),
             stagger_enabled=bool(self.stagger_var.get()),
             stagger_min_minutes=smin,
@@ -351,120 +344,35 @@ class AutomationsView(BaseView):
         )
 
         def work():
-            return auto_svc.create_automation(**payload)
+            created = auto_svc.create_automation(**payload)
+            if not created.get("ok"):
+                return created
+            activated = auto_svc.activate_automation(created["id"])
+            if not activated.get("ok"):
+                return {
+                    "ok": False,
+                    "message": activated.get("message") or "Criada, mas falhou ao ativar",
+                }
+            return {
+                "ok": True,
+                "message": activated.get("message") or "Automação criada e ativada",
+            }
 
         def done(result):
             if not result.get("ok"):
                 self.app.toast(result.get("message") or "Erro", "error")
                 return
-            self.app.toast(result.get("message") or "Criada", "success")
+            self.app.toast(result.get("message") or "Ativada", "success")
             self.caption.delete("1.0", "end")
             self.name_entry.delete(0, "end")
             self._clear_videos()
             self._clear_cover()
             self._clear_accounts()
-            self._reload_list()
-
-        self.app.run_async(work, on_done=done)
-
-    def _reload_list(self):
-        for w in self.list_body.winfo_children():
-            w.destroy()
-        items = auto_svc.list_automations()
-        if not items:
-            ctk.CTkLabel(
-                self.list_body, text="Nenhuma automação ainda.",
-                font=(theme.FONT, 12), text_color=theme.MUTED,
-            ).pack(anchor="w")
-            return
-        for item in items:
-            self._render_item(item)
-
-    def _render_item(self, item: dict):
-        row = widgets.card(self.list_body)
-        row.pack(fill="x", pady=6)
-        top = ctk.CTkFrame(row, fg_color="transparent")
-        top.pack(fill="x", padx=14, pady=(12, 4))
-        ctk.CTkLabel(
-            top, text=item.get("name") or f"Automação #{item['id']}",
-            font=(theme.FONT, 14, "bold"), text_color=theme.TEXT,
-        ).pack(side="left")
-        status = item.get("status") or "draft"
-        status_colors = {
-            "active": theme.SUCCESS,
-            "paused": theme.WARNING,
-            "done": theme.MUTED,
-            "draft": theme.MUTED,
-            "error": theme.DANGER,
-        }
-        ctk.CTkLabel(
-            top, text=status.upper(), font=(theme.FONT, 11, "bold"),
-            text_color=status_colors.get(status, theme.MUTED),
-        ).pack(side="right")
-
-        meta = (
-            f"{item.get('video_count', 0)} vídeo(s) · "
-            f"{len(item.get('account_ids') or [])} conta(s) · "
-            f"a cada {item.get('interval_minutes')} min · "
-            f"fila {item.get('jobs_posted', 0)} ok / {item.get('jobs_pending', 0)} pendente / {item.get('jobs_error', 0)} erro"
-        )
-        ctk.CTkLabel(row, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w").pack(
-            fill="x", padx=14, pady=(0, 4)
-        )
-        if item.get("last_error"):
-            ctk.CTkLabel(
-                row, text=item["last_error"][:180], font=(theme.FONT, 11),
-                text_color=theme.DANGER, anchor="w", wraplength=700, justify="left",
-            ).pack(fill="x", padx=14, pady=(0, 4))
-
-        actions = ctk.CTkFrame(row, fg_color="transparent")
-        actions.pack(fill="x", padx=14, pady=(4, 12))
-        aid = item["id"]
-        if status != "active":
-            widgets.primary_button(
-                actions, "Ativar", lambda i=aid: self._activate(i), width=100, height=34,
-            ).pack(side="left")
-        else:
-            widgets.ghost_button(
-                actions, "Pausar", lambda i=aid: self._pause(i), width=100, height=34,
-            ).pack(side="left")
-        widgets.ghost_button(
-            actions, "Excluir", lambda i=aid: self._delete(i), width=100, height=34,
-        ).pack(side="left", padx=(8, 0))
-
-    def _activate(self, automation_id: int):
-        def work():
-            return auto_svc.activate_automation(automation_id)
-
-        def done(result):
-            self.app.toast(result.get("message") or "", "success" if result.get("ok") else "error")
-            self._reload_list()
-
-        self.app.run_async(work, on_done=done)
-
-    def _pause(self, automation_id: int):
-        def work():
-            return auto_svc.pause_automation(automation_id)
-
-        def done(result):
-            self.app.toast(result.get("message") or "", "success" if result.get("ok") else "error")
-            self._reload_list()
-
-        self.app.run_async(work, on_done=done)
-
-    def _delete(self, automation_id: int):
-        def work():
-            return auto_svc.delete_automation(automation_id)
-
-        def done(result):
-            self.app.toast(result.get("message") or "", "success" if result.get("ok") else "error")
-            self._reload_list()
 
         self.app.run_async(work, on_done=done)
 
     def on_show(self):
         self._reload_accounts()
-        self._reload_list()
 
     def refresh(self):
-        self._reload_list()
+        pass

@@ -4,6 +4,42 @@ import customtkinter as ctk
 from ui import theme
 
 
+def soft_scrollable(master, **kwargs):
+    """CTkScrollableFrame com roda do mouse mais leve (menos 'duro')."""
+    opts = dict(
+        fg_color="transparent",
+        scrollbar_button_color=theme.CARD3,
+        scrollbar_button_hover_color=theme.PRIMARY,
+    )
+    opts.update(kwargs)
+    frame = ctk.CTkScrollableFrame(master, **opts)
+    canvas = frame._parent_canvas  # noqa: SLF001
+    try:
+        canvas.configure(yscrollincrement=8)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        frame._scrollbar.configure(width=14)  # noqa: SLF001
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _wheel(event):
+        # Windows: delta ±120; passos menores = scroll fluido
+        steps = int(-1 * (event.delta / 40)) or (-1 if event.delta > 0 else 1)
+        canvas.yview_scroll(steps, "units")
+        return "break"
+
+    def _enter(_event):
+        canvas.bind_all("<MouseWheel>", _wheel)
+
+    def _leave(_event):
+        canvas.unbind_all("<MouseWheel>")
+
+    frame.bind("<Enter>", _enter)
+    frame.bind("<Leave>", _leave)
+    return frame
+
+
 def card(master, **kwargs):
     opts = dict(fg_color=theme.CARD, corner_radius=16, border_width=1, border_color=theme.BORDER)
     opts.update(kwargs)
