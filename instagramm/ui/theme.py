@@ -37,14 +37,16 @@ STATUS_COLORS = {
     "healthy": SUCCESS,
     "pending": ACCENT,
     "error": DANGER,
+    "banned": DANGER,
     "warning": WARNING,
     "unknown": MUTED,
 }
 
 STATUS_LABELS = {
     "healthy": "Conectada",
-    "pending": "Aguardando 2FA",
-    "error": "Erro",
+    "pending": "Checkpoint",
+    "error": "Sessão caída",
+    "banned": "Banida",
     "warning": "Atenção",
     "unknown": "Sem sessão",
 }

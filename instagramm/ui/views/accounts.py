@@ -119,6 +119,10 @@ class AccountsView(BaseView):
         head = ctk.CTkFrame(wrap, fg_color="transparent")
         head.pack(fill="x", padx=18, pady=(16, 6))
         widgets.title(head, "Contas conectadas", size=16).pack(side="left")
+        self.check_all_btn = widgets.ghost_button(
+            head, "🔍 Verificar todas", self._check_all, width=140, height=32,
+        )
+        self.check_all_btn.pack(side="right", padx=(8, 0))
         self.count_label = ctk.CTkLabel(head, text="0", fg_color=theme.CARD2, corner_radius=10, width=34, text_color=theme.MUTED, font=(theme.FONT, 12, "bold"))
         self.count_label.pack(side="right")
 
@@ -198,6 +202,9 @@ class AccountsView(BaseView):
         ctk.CTkButton(actions, text="Perfil", height=34, width=72, corner_radius=10, fg_color="transparent",
                       border_width=1, border_color=theme.PRIMARY, text_color=theme.PRIMARY, hover_color=theme.PRIMARY_SOFT,
                       command=lambda a=acc: self._edit_profile(a)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(actions, text="Verificar", height=34, width=90, corner_radius=10, fg_color="transparent",
+                      border_width=1, border_color=theme.BORDER, text_color=theme.TEXT, hover_color=theme.CARD,
+                      command=lambda a=acc: self._check_one(a)).pack(side="left", padx=(0, 6))
         widgets.danger_button(actions, "Excluir", lambda a=acc: self._delete(a)).pack(side="left")
 
     def _edit_proxy(self, acc):
@@ -212,6 +219,61 @@ class AccountsView(BaseView):
         from ui.profile_dialog import ProfileDialog
 
         ProfileDialog(self.app, acc, on_saved=self._reload)
+
+    def _check_one(self, acc):
+        if not acc.get("has_session"):
+            self.app.toast("Conta sem sessão — conecte primeiro", "error")
+            return
+        self.app.toast(f"Verificando @{acc.get('username') or acc.get('name')}...", "info")
+
+        def done(res):
+            kind = (res.get("kind") or res.get("status") or "").lower()
+            msg = res.get("message") or ""
+            name = res.get("username") or acc.get("username") or acc.get("name")
+            if kind == "healthy":
+                self.app.toast(f"✅ @{name} OK", "success")
+            elif kind == "banned":
+                self.app.toast(f"🚫 @{name} BAN / desativada — {msg}", "error")
+            elif kind == "expired":
+                self.app.toast(f"⚠️ @{name} sessão caiu — reconecte", "error")
+            elif kind == "challenge":
+                self.app.toast(f"⚠️ @{name} checkpoint — abra o app oficial", "error")
+            else:
+                self.app.toast(f"❌ @{name}: {msg}", "error")
+            self._reload()
+
+        self.app.run_async(lambda: service.check_account(acc["id"]), on_done=done)
+
+    def _check_all(self):
+        self.check_all_btn.configure(state="disabled", text="Verificando...")
+        self.app.toast("Verificando todas as contas...", "info")
+
+        def done(summary):
+            self.check_all_btn.configure(state="normal", text="🔍 Verificar todas")
+            if isinstance(summary, list):
+                self.app.toast("Verificação concluída", "info")
+                self._reload()
+                return
+            banned = summary.get("banned") or []
+            expired = summary.get("expired") or []
+            challenge = summary.get("challenge") or []
+            healthy = int(summary.get("healthy") or 0)
+            total = int(summary.get("total") or 0)
+            parts = [f"{healthy}/{total} OK"]
+            if banned:
+                parts.append(f"{len(banned)} ban")
+            if expired:
+                parts.append(f"{len(expired)} sessão caída")
+            if challenge:
+                parts.append(f"{len(challenge)} checkpoint")
+            kind = "error" if (banned or expired or challenge) else "success"
+            self.app.toast(" · ".join(parts), kind)
+            if banned:
+                names = ", ".join((b.get("username") or b.get("name") or "?") for b in banned[:4])
+                self.app.toast(f"🚫 Banidas: {names}", "error")
+            self._reload()
+
+        self.app.run_async(service.check_all_accounts, on_done=done)
 
     def _read_form(self):
         return {

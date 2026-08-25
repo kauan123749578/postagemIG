@@ -124,12 +124,41 @@ class App(ctk.CTk):
         dlg.focus_force()
 
     def _check_sessions_on_start(self):
-        def done(expired):
-            if not expired:
+        def done(summary):
+            # compat: se ainda vier lista antiga
+            if isinstance(summary, list):
+                if not summary:
+                    return
+                names = ", ".join(e["name"] for e in summary[:3])
+                extra = f" (+{len(summary)-3})" if len(summary) > 3 else ""
+                self.toast(f"⚠️ Sessão expirada: {names}{extra}. Reconecte em Contas.", "error")
                 return
-            names = ", ".join(e["name"] for e in expired[:3])
-            extra = f" (+{len(expired)-3})" if len(expired) > 3 else ""
-            self.toast(f"⚠️ Sessão expirada: {names}{extra}. Reconecte em Contas.", "error")
+
+            banned = summary.get("banned") or []
+            expired = summary.get("expired") or []
+            challenge = summary.get("challenge") or []
+            healthy = int(summary.get("healthy") or 0)
+            total = int(summary.get("total") or 0)
+
+            if banned:
+                names = ", ".join(
+                    (b.get("username") or b.get("name") or "?") for b in banned[:3]
+                )
+                extra = f" (+{len(banned)-3})" if len(banned) > 3 else ""
+                self.toast(f"🚫 BAN / desativada: {names}{extra}", "error")
+            if expired:
+                names = ", ".join(
+                    (e.get("username") or e.get("name") or "?") for e in expired[:3]
+                )
+                extra = f" (+{len(expired)-3})" if len(expired) > 3 else ""
+                self.toast(f"⚠️ Sessão caiu: {names}{extra} — reconecte em Contas", "error")
+            if challenge:
+                names = ", ".join(
+                    (c.get("username") or c.get("name") or "?") for c in challenge[:3]
+                )
+                self.toast(f"⚠️ Checkpoint: {names} — abra o app oficial", "error")
+            if total and not banned and not expired and not challenge:
+                self.toast(f"Contas OK: {healthy}/{total} verificadas", "success")
 
         self.run_async(service.check_all_accounts, on_done=done)
 

@@ -124,7 +124,15 @@ def _is_session_expired_message(message: str) -> bool:
     low = (message or "").lower()
     return any(x in low for x in (
         "sessão expirada", "loginrequired", "login required", "login_required",
-        "refaça o login", "reconecte em contas",
+        "refaça o login", "reconecte em contas", "sessão caiu",
+    ))
+
+
+def _is_ban_message(message: str) -> bool:
+    low = (message or "").lower()
+    return any(x in low for x in (
+        "ban", "desativad", "disabled", "suspended", "não encontrado",
+        "nao encontrado", "feedback", "restrição", "restricao",
     ))
 
 
@@ -140,6 +148,38 @@ def _mark_session_expired(db, acc: Account, message: str) -> None:
     acc.status = "error"
     acc.status_message = message or "Sessão expirada. Refaça o login em Contas."
     notify.log_event("⚠️ Sessão expirada — faça login novamente em Contas", "warning", acc.name)
+
+
+def _mark_account_health(db, acc: Account, probe: dict) -> None:
+    """Atualiza status da conta a partir do probe (healthy/banned/expired/...)."""
+    kind = (probe.get("kind") or probe.get("status") or "error").lower()
+    msg = probe.get("message") or ""
+    if kind == "healthy":
+        acc.status = "healthy"
+        acc.status_message = "Conectada"
+        if probe.get("settings"):
+            acc.session_json = json.dumps(probe["settings"])
+            _export_session_file(acc.username, probe["settings"])
+        if probe.get("username"):
+            acc.username = probe["username"]
+        notify.log_event("Conta OK na verificação", "success", acc.name)
+        return
+    if kind == "banned":
+        acc.status = "banned"
+        acc.status_message = msg or "Conta banida / desativada"
+        notify.log_event(f"🚫 BAN / desativada: {msg}", "error", acc.name)
+        return
+    if kind == "challenge":
+        acc.status = "pending"
+        acc.status_message = msg or "Checkpoint do Instagram"
+        notify.log_event(f"⚠️ Challenge: {msg}", "warning", acc.name)
+        return
+    if kind == "expired":
+        _mark_session_expired(db, acc, msg)
+        return
+    acc.status = "error"
+    acc.status_message = msg or "Erro na verificação"
+    notify.log_event(f"Erro na verificação: {msg}", "error", acc.name)
 
 
 def recent_events(limit: int = 80) -> list[dict]:
@@ -435,53 +475,79 @@ def connect_account(
 
 
 def check_account(account_id: int) -> dict:
+    """Verifica se a conta está OK, caiu (sessão) ou tomou ban."""
     with session_scope() as db:
         acc = db.get(Account, account_id)
         if not acc:
-            return {"status": "error", "message": "Conta não encontrada"}
+            return {"status": "error", "kind": "error", "message": "Conta não encontrada"}
         try:
-            result = ig.verify_session(acc)
-            acc.session_json = json.dumps(result["settings"])
-            from core.device import device_key_from_settings
+            probe = ig.probe_account_health(acc)
+        except Exception as exc:  # noqa: BLE001
+            probe = {"status": "error", "kind": "error", "message": str(exc)}
 
-            dkey = device_key_from_settings(result["settings"])
+        _mark_account_health(db, acc, probe)
+        from core.device import device_key_from_settings
+
+        if probe.get("settings"):
+            dkey = device_key_from_settings(probe["settings"])
             if dkey and not (getattr(acc, "device_key", "") or "").strip():
                 acc.device_key = dkey
-            acc.status = "healthy"
-            acc.status_message = "Conectada"
-            _export_session_file(acc.username, result["settings"])
-            return {"status": "healthy", "message": "Sessão válida"}
-        except ig.InstagramError as exc:
-            msg = str(exc)
-            if _is_session_expired_message(msg):
-                _mark_session_expired(db, acc, msg)
-            else:
-                acc.status = "error"
-                acc.status_message = msg
-            return {"status": "error", "message": msg}
+
+        return {
+            "id": acc.id,
+            "name": acc.name,
+            "username": acc.username or probe.get("username") or "",
+            "status": acc.status,
+            "kind": probe.get("kind") or acc.status,
+            "message": acc.status_message or probe.get("message") or "",
+            "ok": (probe.get("kind") == "healthy"),
+        }
 
 
-def check_all_accounts() -> list[dict]:
-    """Verifica todas as contas com sessão salva. Retorna as que expiraram."""
-    expired = []
+def check_all_accounts() -> dict:
+    """Verifica todas as contas com sessão. Retorna resumo + listas por tipo."""
+    results: list[dict] = []
+    banned: list[dict] = []
+    expired: list[dict] = []
+    challenge: list[dict] = []
+    errors: list[dict] = []
+    healthy = 0
+
     with session_scope() as db:
         accounts = db.query(Account).filter(Account.session_json != "").all()
-        for acc in accounts:
-            try:
-                result = ig.verify_session(acc)
-                acc.session_json = json.dumps(result["settings"])
-                acc.status = "healthy"
-                acc.status_message = "Conectada"
-                _export_session_file(acc.username, result["settings"])
-            except ig.InstagramError as exc:
-                msg = str(exc)
-                if _is_session_expired_message(msg):
-                    _mark_session_expired(db, acc, msg)
-                    expired.append({"id": acc.id, "name": acc.name, "username": acc.username})
-                else:
-                    acc.status = "error"
-                    acc.status_message = msg
-    return expired
+        ids = [a.id for a in accounts]
+
+    for acc_id in ids:
+        row = check_account(acc_id)
+        results.append(row)
+        kind = (row.get("kind") or row.get("status") or "").lower()
+        if kind == "healthy" or row.get("status") == "healthy":
+            healthy += 1
+        elif kind == "banned" or row.get("status") == "banned":
+            banned.append(row)
+        elif kind == "expired":
+            expired.append(row)
+        elif kind == "challenge" or row.get("status") == "pending":
+            challenge.append(row)
+        else:
+            errors.append(row)
+        # pausa leve entre contas
+        time.sleep(1.2)
+
+    return {
+        "total": len(results),
+        "healthy": healthy,
+        "banned": banned,
+        "expired": expired,
+        "challenge": challenge,
+        "errors": errors,
+        "results": results,
+        # compat com app antigo (toast de sessão)
+        "expired_compat": [
+            {"id": e["id"], "name": e.get("name") or "", "username": e.get("username") or ""}
+            for e in expired
+        ],
+    }
 
 
 # ---------------- Mídia ----------------

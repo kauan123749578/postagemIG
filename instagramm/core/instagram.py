@@ -354,22 +354,180 @@ def _run_authed(account, callback, *, preserve_session: bool = False, use_proxy:
         _raise_api_error(exc)
 
 
+def _classify_health_error(exc: Exception) -> tuple[str, str]:
+    """Classifica falha de verificação: banned | expired | challenge | error."""
+    from instagrapi.exceptions import (
+        ChallengeRequired,
+        ClientLoginRequired,
+        FeedbackRequired,
+        LoginRequired,
+        SentryBlock,
+        UserNotFound,
+    )
+
+    name = exc.__class__.__name__
+    raw = str(exc) or name
+    low = raw.lower()
+    err = getattr(exc, "error_response", None)
+    if isinstance(err, dict):
+        low = f"{low} {json.dumps(err).lower()}"
+
+    ban_hints = (
+        "has been disabled",
+        "account has been disabled",
+        "user is inactive",
+        "inactive user",
+        "suspended",
+        "we disabled your account",
+        "your account was disabled",
+        "violat",
+        "account is disabled",
+        "user not found",
+        "usuario desativado",
+        "conta desativada",
+        "foi desativada",
+        "foi desabilitada",
+    )
+    challenge_hints = (
+        "challenge_required",
+        "checkpoint_required",
+        "checkpoint",
+        "challenge",
+        "bloks",
+    )
+
+    if isinstance(exc, (FeedbackRequired, SentryBlock)) or any(h in low for h in ban_hints):
+        # FeedbackRequired / SentryBlock muitas vezes = restrição/ban
+        if "feedback_required" in low or "sentry" in low or any(h in low for h in ban_hints):
+            if any(h in low for h in ban_hints) or "disabled" in low or "suspended" in low:
+                return (
+                    "banned",
+                    "Conta com ban/desativada no Instagram (ou removida). Confira no app oficial.",
+                )
+            # feedback genérico — tratar como ban/restrição forte
+            if isinstance(exc, (FeedbackRequired, SentryBlock)):
+                return (
+                    "banned",
+                    "Instagram bloqueou a conta (feedback/restrição). Pode ser ban temporário ou permanente.",
+                )
+
+    if isinstance(exc, UserNotFound) or name == "UserNotFound":
+        return (
+            "banned",
+            "Usuário não encontrado — conta pode ter sido banida ou o @ mudou.",
+        )
+
+    if isinstance(exc, ChallengeRequired) or any(h in low for h in challenge_hints):
+        if "login_required" not in low:
+            return (
+                "challenge",
+                "Checkpoint/challenge do Instagram — abra o app oficial e complete a verificação.",
+            )
+
+    if isinstance(exc, (LoginRequired, ClientLoginRequired)) or _needs_relogin(exc):
+        return (
+            "expired",
+            "Sessão caiu (login_required). Conta ainda pode existir — reconecte em Contas.",
+        )
+
+    return ("error", _friendly(exc))
+
+
 def verify_session(account) -> dict[str, Any]:
     """Confere se a sessão salva ainda é válida."""
     if not account.session_json:
-        raise InstagramError("Conta sem sessão. Conecte novamente.")
+        raise InstagramError("Conta sem sessão. Conecte novamente.", kind="expired")
     settings = json.loads(account.session_json)
     cl = _client_from_account(account, settings)
     try:
         info = cl.account_info()
     except Exception as exc:  # noqa: BLE001
-        raise InstagramError(_friendly(exc)) from exc
+        kind, msg = _classify_health_error(exc)
+        raise InstagramError(msg, kind=kind) from exc
     return {
         "settings": cl.get_settings(),
         "username": info.username,
         "follower_count": getattr(info, "follower_count", 0),
         "media_count": getattr(info, "media_count", 0),
     }
+
+
+def probe_account_health(account) -> dict[str, Any]:
+    """Verifica saúde da conta: healthy / expired / banned / challenge / error.
+
+    1) Testa sessão (account_info).
+    2) Se sessão caiu, tenta ver se o @ ainda existe (user_id_from_username)
+       para distinguir ban vs só sessão expirada.
+    """
+    username = (getattr(account, "username", "") or "").strip().lstrip("@")
+    if not account.session_json:
+        return {
+            "status": "error",
+            "kind": "error",
+            "message": "Conta sem sessão salva. Conecte em Contas.",
+            "username": username,
+        }
+
+    settings = json.loads(account.session_json)
+    cl = _client_from_account(account, settings)
+
+    try:
+        info = cl.account_info()
+        # confirma o próprio perfil
+        try:
+            if cl.user_id:
+                cl.user_info(cl.user_id)
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "status": "healthy",
+            "kind": "healthy",
+            "message": "Conta OK — sessão válida",
+            "username": info.username or username,
+            "follower_count": getattr(info, "follower_count", 0),
+            "media_count": getattr(info, "media_count", 0),
+            "settings": cl.get_settings(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        kind, msg = _classify_health_error(exc)
+
+        # Sessão caiu: checa se o @ ainda existe (ban vs só logout)
+        if kind == "expired" and username:
+            try:
+                from core.device import apply_device
+
+                probe = _new_client()
+                apply_device(probe, "samsung_m04")
+                if account.proxy_url and str(account.proxy_url).strip():
+                    try:
+                        probe.set_proxy(normalize_proxy_url(account.proxy_url))
+                    except Exception:  # noqa: BLE001
+                        pass
+                uid = probe.user_id_from_username(username)
+                if not uid:
+                    kind = "banned"
+                    msg = (
+                        f"@{username} não encontrado — provável ban/desativação. "
+                        "Confira no Instagram oficial."
+                    )
+                else:
+                    msg = (
+                        f"Sessão caiu, mas @{username} ainda existe. "
+                        "Reconecte em Contas (não parece ban)."
+                    )
+            except Exception as probe_exc:  # noqa: BLE001
+                pkind, pmsg = _classify_health_error(probe_exc)
+                if pkind == "banned":
+                    kind = "banned"
+                    msg = pmsg
+                # se o probe falhar por rate limit / rede, mantém "expired"
+
+        return {
+            "status": kind if kind in ("banned", "expired", "challenge", "error") else "error",
+            "kind": kind,
+            "message": msg,
+            "username": username,
+        }
 
 
 def load_session_file(path: str, proxy_url: str | None = None) -> dict[str, Any]:
