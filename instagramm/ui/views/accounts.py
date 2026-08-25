@@ -133,7 +133,15 @@ class AccountsView(BaseView):
         ctk.CTkButton(actions, text="Editar", height=34, width=80, corner_radius=10, fg_color="transparent",
                       border_width=1, border_color=theme.BORDER, text_color=theme.TEXT, hover_color=theme.CARD,
                       command=lambda a=acc: self._edit(a)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(actions, text="Proxy", height=34, width=72, corner_radius=10, fg_color="transparent",
+                      border_width=1, border_color=theme.PRIMARY, text_color=theme.PRIMARY, hover_color=theme.PRIMARY_SOFT,
+                      command=lambda a=acc: self._edit_proxy(a)).pack(side="left", padx=(0, 6))
         widgets.danger_button(actions, "Excluir", lambda a=acc: self._delete(a)).pack(side="left")
+
+    def _edit_proxy(self, acc):
+        from ui.proxy_dialog import ProxyDialog
+
+        ProxyDialog(self.app, acc, on_saved=self._reload)
 
     def _read_form(self):
         return {

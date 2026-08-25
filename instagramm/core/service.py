@@ -25,7 +25,7 @@ from core.config import (
 )
 from core.crypto import decrypt_secret, encrypt_secret
 from core.loop_timing import jitter_seconds
-from core.proxy import normalize_proxy_url
+from core.proxy import normalize_proxy_url, test_proxy as _test_proxy_raw
 from core.db import (
     Account,
     Automation,
@@ -157,6 +157,11 @@ def get_account(account_id: int) -> dict | None:
     with session_scope() as db:
         acc = db.get(Account, account_id)
         return _account_dict(acc, db) if acc else None
+
+
+def test_proxy(raw: str) -> dict:
+    """Testa proxy (IP de saída). Usado pelo dialog de Contas."""
+    return _test_proxy_raw(raw)
 
 
 def create_account(
@@ -510,13 +515,19 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             return {"ok": False, "message": str(exc), "kind": exc.kind}
 
 
-def post_story_now(account_id: int, media_path: str, caption: str = "", link: str = "") -> dict:
+def post_story_now(
+    account_id: int,
+    media_path: str,
+    caption: str = "",
+    link: str | dict | None = None,
+) -> dict:
     """Publica um Story (foto ou vídeo) imediatamente e registra no log."""
     with session_scope() as db:
         acc = db.get(Account, account_id)
         if not acc:
             return {"ok": False, "message": "Conta não encontrada"}
         final_caption = caption or ""
+        link_url = link.get("url") if isinstance(link, dict) else (link or "")
         try:
             result = ig.post_story(acc, media_path, final_caption, link)
             acc.session_json = json.dumps(result["settings"])
@@ -534,7 +545,7 @@ def post_story_now(account_id: int, media_path: str, caption: str = "", link: st
             ))
             kind = "vídeo" if result.get("kind") == "video" else "foto"
             metrics.bump("post")
-            link_txt = f" 🔗 {link}" if link else ""
+            link_txt = f" 🔗 {link_url}" if link_url else ""
             notify.log_event(f"Story publicado ({kind}) 📸{link_txt}", "success", acc.name)
             return {"ok": True, "media_pk": result["media_pk"], "kind": result.get("kind", "")}
         except ig.InstagramError as exc:
@@ -826,35 +837,227 @@ def stop_all_loops() -> int:
 
 # ---------------- Agendamentos ----------------
 
-def add_scheduled(account_id: int, video_path: str, scheduled_at: datetime, caption: str = "", cover_path: str = "") -> None:
+def add_scheduled(
+    account_id: int,
+    video_path: str,
+    scheduled_at: datetime,
+    caption: str = "",
+    cover_path: str = "",
+    *,
+    post_type: str = "reel",
+    link_url: str = "",
+    link_text: str = "",
+    link_x: float = 0.5,
+    link_y: float = 0.8,
+    link_w: float = 0.6,
+    link_h: float = 0.068625,
+) -> None:
     with session_scope() as db:
         db.add(ScheduledPost(
             account_id=account_id,
+            post_type=post_type or "reel",
             video_path=video_path,
             cover_path=cover_path or "",
             caption=caption,
+            link_url=link_url or "",
+            link_text=link_text or "",
+            link_x=float(link_x),
+            link_y=float(link_y),
+            link_w=float(link_w),
+            link_h=float(link_h),
             scheduled_at=scheduled_at,
             status="pending",
         ))
 
 
-def list_scheduled() -> list[dict]:
+def schedule_stories(
+    account_ids: list[int],
+    media_paths: list[str],
+    schedule_times: list[datetime],
+    *,
+    caption: str = "",
+    link_url: str = "",
+    link_text: str = "",
+    link_x: float = 0.5,
+    link_y: float = 0.8,
+    link_w: float = 0.6,
+    link_h: float = 0.068625,
+) -> dict:
+    """Agenda stories: cada mídia × horário × conta."""
+    if not account_ids:
+        return {"ok": False, "message": "Selecione pelo menos uma conta"}
+    if not media_paths:
+        return {"ok": False, "message": "Selecione pelo menos uma mídia"}
+    if not schedule_times:
+        return {"ok": False, "message": "Adicione pelo menos um horário"}
+
+    imported = [import_media_for_story(p) for p in media_paths if Path(p).exists()]
+    if not imported:
+        return {"ok": False, "message": "Nenhuma mídia válida"}
+
+    created = 0
     with session_scope() as db:
-        rows = (
+        healthy = {
+            a.id for a in db.query(Account).filter(
+                Account.id.in_(account_ids),
+                Account.status == "healthy",
+                Account.is_active.is_(True),
+            ).all()
+        }
+        if not healthy:
+            return {"ok": False, "message": "Nenhuma conta saudável selecionada"}
+
+        for acc_id in account_ids:
+            if acc_id not in healthy:
+                continue
+            for local in imported:
+                for when in schedule_times:
+                    db.add(ScheduledPost(
+                        account_id=acc_id,
+                        post_type="story",
+                        video_path=local,
+                        caption=caption or "",
+                        link_url=link_url or "",
+                        link_text=link_text or "",
+                        link_x=float(link_x),
+                        link_y=float(link_y),
+                        link_w=float(link_w),
+                        link_h=float(link_h),
+                        scheduled_at=when,
+                        status="pending",
+                    ))
+                    created += 1
+    notify.log_event(f"{created} story(s) agendado(s)", "success")
+    return {"ok": True, "message": f"{created} publicação(ões) agendada(s)", "count": created}
+
+
+def import_media_for_story(src: str) -> str:
+    ext = Path(src).suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        return import_image(src)
+    return import_video(src)
+
+
+def publish_stories_now(
+    account_ids: list[int],
+    media_paths: list[str],
+    *,
+    caption: str = "",
+    link_url: str = "",
+    link_text: str = "",
+    link_x: float = 0.5,
+    link_y: float = 0.8,
+    link_w: float = 0.6,
+    link_h: float = 0.068625,
+) -> dict:
+    if not account_ids or not media_paths:
+        return {"ok": False, "message": "Contas e mídias obrigatórias"}
+    link = None
+    if link_url:
+        link = {
+            "url": link_url,
+            "text": link_text,
+            "x": link_x,
+            "y": link_y,
+            "width": link_w,
+            "height": link_h,
+        }
+    ok_count = 0
+    errors: list[str] = []
+    for acc_id in account_ids:
+        for media in media_paths:
+            res = post_story_now(acc_id, media, caption, link)
+            if res.get("ok"):
+                ok_count += 1
+            else:
+                errors.append(res.get("message") or "Erro")
+    if ok_count == 0:
+        return {"ok": False, "message": errors[0] if errors else "Falha ao publicar"}
+    return {"ok": True, "message": f"{ok_count} story(s) publicado(s)", "errors": errors}
+
+
+def list_scheduled(post_type: str | None = None) -> list[dict]:
+    with session_scope() as db:
+        q = (
             db.query(ScheduledPost, Account.name)
             .join(Account, ScheduledPost.account_id == Account.id)
-            .order_by(ScheduledPost.scheduled_at)
-            .all()
         )
+        if post_type:
+            q = q.filter(ScheduledPost.post_type == post_type)
+        rows = q.order_by(ScheduledPost.scheduled_at).all()
         return [{
             "id": s.id,
             "account": name,
+            "post_type": getattr(s, "post_type", None) or "reel",
             "video_name": Path(s.video_path).name if s.video_path else "",
             "caption": s.caption,
+            "link_url": getattr(s, "link_url", "") or "",
             "scheduled_at": s.scheduled_at.isoformat() if s.scheduled_at else "",
             "status": s.status,
             "error": s.error_message,
         } for s, name in rows]
+
+
+def process_scheduled_post(post_id: int) -> bool:
+    """Publica um agendamento due."""
+    db = SessionLocal()
+    try:
+        post = db.get(ScheduledPost, post_id)
+        if not post or post.status != "pending":
+            return False
+        acc_id = post.account_id
+        post_type = getattr(post, "post_type", None) or "reel"
+        media = post.video_path
+        caption = post.caption or ""
+        cover = post.cover_path or None
+        link = None
+        if getattr(post, "link_url", ""):
+            link = {
+                "url": post.link_url,
+                "text": getattr(post, "link_text", "") or "",
+                "x": float(getattr(post, "link_x", 0.5) or 0.5),
+                "y": float(getattr(post, "link_y", 0.8) or 0.8),
+                "width": float(getattr(post, "link_w", 0.6) or 0.6),
+                "height": float(getattr(post, "link_h", 0.068625) or 0.068625),
+            }
+    finally:
+        db.close()
+
+    if post_type == "story":
+        result = post_story_now(acc_id, media, caption, link)
+    else:
+        result = post_reel_now(acc_id, media, caption, cover)
+
+    db = SessionLocal()
+    try:
+        post = db.get(ScheduledPost, post_id)
+        if not post:
+            return True
+        if result.get("ok"):
+            post.status = "posted"
+        else:
+            post.status = "error"
+            post.error_message = result.get("message", "Erro")
+        db.commit()
+    finally:
+        db.close()
+    return True
+
+
+def list_due_scheduled_ids(limit: int = 5) -> list[int]:
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ScheduledPost.id)
+            .filter(ScheduledPost.status == "pending", ScheduledPost.scheduled_at <= now)
+            .order_by(ScheduledPost.scheduled_at)
+            .limit(limit)
+            .all()
+        )
+        return [r[0] for r in rows]
+    finally:
+        db.close()
 
 
 def cancel_scheduled(post_id: int) -> None:

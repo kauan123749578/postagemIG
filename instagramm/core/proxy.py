@@ -55,3 +55,32 @@ def proxy_label(url: str) -> str:
         return f"{host}{port}"
     except Exception:  # noqa: BLE001
         return "proxy configurado"
+
+
+def test_proxy(raw: str, timeout: float = 12.0) -> dict:
+    """Testa se o proxy responde (HTTP GET via proxy)."""
+    url = normalize_proxy_url(raw)
+    if not url:
+        return {"ok": False, "message": "Proxy vazio"}
+    try:
+        import urllib.request
+
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": url, "https": url}),
+        )
+        opener.addheaders = [("User-Agent", "Mozilla/5.0")]
+        with opener.open("https://api.ipify.org?format=json", timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="ignore")
+        ip = "?"
+        try:
+            import json
+
+            ip = json.loads(body).get("ip") or "?"
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "message": f"Proxy OK — IP de saída: {ip}", "ip": ip, "url": proxy_label(url)}
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).strip() or exc.__class__.__name__
+        if len(msg) > 160:
+            msg = msg[:157] + "..."
+        return {"ok": False, "message": f"Falha: {msg}"}
