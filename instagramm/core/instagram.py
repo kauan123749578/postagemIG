@@ -850,7 +850,6 @@ def post_reel(
     cover_path: str | None = None,
     *,
     pin_comment: str | None = None,
-    trial: bool = False,
 ) -> dict[str, Any]:
     """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings, ...}."""
     import random
@@ -867,7 +866,6 @@ def post_reel(
         label = f"@{account.username}"
 
     pin_text = (pin_comment or "").strip()
-    use_trial = bool(trial)
 
     cleaned: Path | None = None
     try:
@@ -900,13 +898,12 @@ def post_reel(
 
     comment_pinned = False
     comment_error = ""
-    trial_used = False
 
     try:
         activity.set_posting(label, "feed", "Abrindo feed (pré-post)…")
 
         def work(cl):
-            nonlocal comment_pinned, comment_error, trial_used
+            nonlocal comment_pinned, comment_error
             # Simula abrir o app antes do upload (menos "cold upload")
             try:
                 cl.get_timeline_feed("cold_start_fetch")
@@ -916,31 +913,8 @@ def post_reel(
             activity.set_posting(label, "feed", f"Aguardando {pause:.0f}s antes de enviar…")
             time.sleep(pause)
 
-            if use_trial:
-                activity.set_posting(label, "trial", "Checando Trial Reels na conta…")
-                eligible = False
-                try:
-                    eligible = bool(cl.clip_trial_eligible())
-                except Exception as texc:  # noqa: BLE001
-                    logger.warning("clip_trial_eligible falhou (%s)", texc)
-                if not eligible:
-                    raise InstagramError(
-                        "Esta conta não está habilitada para Trial Reels (reels de teste). "
-                        "Desmarque a opção ou teste em outra conta.",
-                        kind="error",
-                    )
-                activity.set_posting(label, "upload", "Enviando Trial Reel (teste)…")
-                media = cl.clip_upload(
-                    upload_video,
-                    caption or "",
-                    thumbnail=thumb,
-                    trial=True,
-                    trial_graduation_strategy="manual",
-                )
-                trial_used = True
-            else:
-                activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
-                media = cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
+            activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
+            media = cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
 
             if pin_text:
                 activity.set_posting(label, "comment", "Comentando e fixando no Reel…")
@@ -982,7 +956,6 @@ def post_reel(
         "settings": settings,
         "comment_pinned": comment_pinned,
         "comment_error": comment_error,
-        "trial": trial_used,
     }
 
 

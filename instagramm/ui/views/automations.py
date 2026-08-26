@@ -346,22 +346,6 @@ class AutomationsView(BaseView):
             body,
             text="Após cada Reel, o app comenta e fixa esse texto automaticamente.",
             font=(theme.FONT, 11), text_color=theme.MUTED, wraplength=720, justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-
-        self.trial_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            body,
-            text="Publicar como Trial Reel (teste)",
-            variable=self.trial_var,
-            font=(theme.FONT, 13),
-            text_color=theme.TEXT,
-            fg_color=theme.PRIMARY,
-            hover_color=theme.PRIMARY_HOVER,
-        ).pack(anchor="w", pady=(0, 4))
-        ctk.CTkLabel(
-            body,
-            text="Só se a conta tiver Trial Reels liberado. Ideal para testar sem ir ao feed dos seguidores.",
-            font=(theme.FONT, 11), text_color=theme.MUTED, wraplength=720, justify="left",
         ).pack(anchor="w", pady=(0, 4))
 
         # Mídia
@@ -635,7 +619,6 @@ class AutomationsView(BaseView):
             stagger_min_minutes=smin,
             stagger_max_minutes=smax,
             pin_comment=self.pin_comment_entry.get().strip(),
-            trial_reels=bool(self.trial_var.get()),
         )
 
         self._creating = True
@@ -672,10 +655,6 @@ class AutomationsView(BaseView):
             self.name_entry.delete(0, "end")
             try:
                 self.pin_comment_entry.delete(0, "end")
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                self.trial_var.set(False)
             except Exception:  # noqa: BLE001
                 pass
             self._clear_videos()

@@ -78,7 +78,6 @@ def _automation_dict(a: Automation, db) -> dict:
         "stagger_min_minutes": a.stagger_min_minutes,
         "stagger_max_minutes": a.stagger_max_minutes,
         "pin_comment": getattr(a, "pin_comment", "") or "",
-        "trial_reels": bool(getattr(a, "trial_reels", False)),
         "status": a.status,
         "total_posts": a.total_posts,
         "jobs_pending": pending,
@@ -116,7 +115,6 @@ def create_automation(
     stagger_max_minutes: int = 8,
     content_type: str = "reel",
     pin_comment: str = "",
-    trial_reels: bool = False,
 ) -> dict:
     caption = (caption or "").strip()
     if not caption:
@@ -132,7 +130,6 @@ def create_automation(
     stagger_max = max(stagger_min, int(stagger_max_minutes or stagger_min))
     name = (name or "").strip() or f"Reels a cada {interval_minutes} min"
     pin_comment = (pin_comment or "").strip()
-    trial_reels = bool(trial_reels)
 
     last_err: Exception | None = None
     for attempt in range(5):
@@ -151,7 +148,6 @@ def create_automation(
                     stagger_min_minutes=stagger_min,
                     stagger_max_minutes=stagger_max,
                     pin_comment=pin_comment,
-                    trial_reels=trial_reels,
                     status=status,
                 )
                 db.add(a)
@@ -593,7 +589,6 @@ def process_automation_job(job_id: int) -> bool:
     caption = ""
     cover_path = ""
     pin_comment = ""
-    trial = False
 
     db = SessionLocal()
     try:
@@ -623,7 +618,6 @@ def process_automation_job(job_id: int) -> bool:
         caption = job.caption or ""
         cover_path = job.cover_path or ""
         pin_comment = (getattr(auto, "pin_comment", None) or "").strip()
-        trial = bool(getattr(auto, "trial_reels", False))
     finally:
         db.close()
 
@@ -637,7 +631,6 @@ def process_automation_job(job_id: int) -> bool:
         caption,
         cover_path or None,
         pin_comment=pin_comment or None,
-        trial=trial,
     )
 
     db = SessionLocal()

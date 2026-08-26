@@ -14,7 +14,6 @@ from ui.views.automations import AutomationsView
 from ui.views.dashboard import DashboardView
 from ui.views.logs import LogsView
 from ui.views.profile import ProfileView
-from ui.views.publish import PublishView
 from ui.views.settings import SettingsView
 from ui.views.stories import StoriesView
 
@@ -24,7 +23,6 @@ NAV = [
     ("profile", "  🖼️  Perfil"),
     ("automations", "  ⚡  Automações"),
     ("stories", "  📸  Stories"),
-    ("publish", "  🚀  Publicar"),
     ("logs", "  📜  Logs"),
     ("settings", "  ⚙️  Configurações"),
 ]
@@ -35,10 +33,12 @@ VIEW_CLASSES = {
     "profile": ProfileView,
     "automations": AutomationsView,
     "stories": StoriesView,
-    "publish": PublishView,
     "logs": LogsView,
     "settings": SettingsView,
 }
+
+# Verificação periódica de saúde das contas (não no startup)
+ACCOUNT_CHECK_MS = 20 * 60 * 1000  # 20 minutos
 
 
 class App(ctk.CTk):
@@ -72,7 +72,8 @@ class App(ctk.CTk):
         self.show_view("dashboard")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(400, self._resume_queues_on_start)
-        self.after(1500, self._check_sessions_on_start)
+        # Saúde das contas: a cada 20 min (não verifica ao abrir)
+        self.after(ACCOUNT_CHECK_MS, self._schedule_account_check)
 
     def _resume_queues_on_start(self):
         """Filas ficam no SQLite: ao reabrir, redistribui atrasados e avisa."""
@@ -125,9 +126,15 @@ class App(ctk.CTk):
         dlg.after(200, lambda: dlg.attributes("-topmost", False))
         dlg.focus_force()
 
-    def _check_sessions_on_start(self):
+    def _schedule_account_check(self):
+        """Roda verificação de contas e agenda a próxima daqui a 20 min."""
+        self._check_accounts_periodic()
+        self.after(ACCOUNT_CHECK_MS, self._schedule_account_check)
+
+    def _check_accounts_periodic(self):
+        """Verifica saúde das contas em background. Só avisa se houver problema."""
+
         def done(summary):
-            # compat: se ainda vier lista antiga
             if isinstance(summary, list):
                 if not summary:
                     return
@@ -139,8 +146,6 @@ class App(ctk.CTk):
             banned = summary.get("banned") or []
             expired = summary.get("expired") or []
             challenge = summary.get("challenge") or []
-            healthy = int(summary.get("healthy") or 0)
-            total = int(summary.get("total") or 0)
 
             if banned:
                 names = ", ".join(
@@ -159,8 +164,7 @@ class App(ctk.CTk):
                     (c.get("username") or c.get("name") or "?") for c in challenge[:3]
                 )
                 self.toast(f"⚠️ Checkpoint: {names} — abra o app oficial", "error")
-            if total and not banned and not expired and not challenge:
-                self.toast(f"Contas OK: {healthy}/{total} verificadas", "success")
+            # Se tudo OK: silêncio (não spammar toast a cada 20 min)
 
         self.run_async(service.check_all_accounts, on_done=done)
 
