@@ -217,6 +217,8 @@ class DashboardView(BaseView):
             "clean_done": "✨",
             "clean_skip": "⚠️",
             "thumb": "🖼️",
+            "feed": "📱",
+            "comment": "💬",
             "upload": "📤",
             "create_auto": "⚡",
             "done": "✅",

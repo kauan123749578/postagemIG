@@ -63,7 +63,20 @@ class PublishView(BaseView):
         self.caption_field = widgets.field_label(inner, "Legenda")
         self.caption_field.pack(anchor="w", pady=(0, 2))
         self.caption_box = ctk.CTkTextbox(inner, height=120, fg_color=theme.CARD2, border_color=theme.BORDER, border_width=1, corner_radius=10)
-        self.caption_box.pack(fill="x", pady=(0, 16))
+        self.caption_box.pack(fill="x", pady=(0, 12))
+
+        self.pin_field = widgets.field_label(inner, "Comentário fixado (opcional)")
+        self.pin_field.pack(anchor="w", pady=(0, 2))
+        self.pin_entry = widgets.entry(inner, "Ex.: Link na bio 🔥")
+        self.pin_entry.pack(fill="x", pady=(0, 4))
+        self.pin_hint = ctk.CTkLabel(
+            inner,
+            text="Depois de publicar, o app comenta e fixa esse texto no Reel.",
+            font=(theme.FONT, 11),
+            text_color=theme.MUTED,
+            anchor="w",
+        )
+        self.pin_hint.pack(fill="x", pady=(0, 16))
 
         self.publish_btn = widgets.primary_button(inner, "🚀  Publicar Reel agora", self._publish)
         self.publish_btn.pack(fill="x")
@@ -82,6 +95,9 @@ class PublishView(BaseView):
             self.pick_media_btn.configure(text="Escolher mídia")
             self.cover_field.pack_forget()
             self.cover_row.pack_forget()
+            self.pin_field.pack_forget()
+            self.pin_entry.pack_forget()
+            self.pin_hint.pack_forget()
             self.link_field.pack(anchor="w", pady=(0, 2), before=self.caption_field)
             self.link_entry.pack(fill="x", pady=(0, 12), before=self.caption_field)
             self.publish_btn.configure(text="📸  Publicar Story agora")
@@ -92,6 +108,9 @@ class PublishView(BaseView):
             self.link_entry.pack_forget()
             self.cover_field.pack(anchor="w", pady=(0, 2), before=self.caption_field)
             self.cover_row.pack(fill="x", pady=(0, 12), before=self.caption_field)
+            self.pin_field.pack(anchor="w", pady=(0, 2), after=self.caption_box)
+            self.pin_entry.pack(fill="x", pady=(0, 4), after=self.pin_field)
+            self.pin_hint.pack(fill="x", pady=(0, 16), after=self.pin_entry)
             self.publish_btn.configure(text="🚀  Publicar Reel agora")
 
     def _fill_accounts(self, accounts):
@@ -141,6 +160,7 @@ class PublishView(BaseView):
             self.app.toast(f"Escolha um(a) {label}", "error")
             return
         caption = self.caption_box.get("1.0", "end").strip()
+        pin_comment = self.pin_entry.get().strip() if self.mode == "reel" else ""
         busy = "Publicando Story..." if self.mode == "story" else "Publicando Reel... (pode demorar)"
         self.publish_btn.configure(state="disabled", text=busy)
 
@@ -149,13 +169,26 @@ class PublishView(BaseView):
         def task():
             if self.mode == "story":
                 return service.post_story_now(acc_id, self.media_path, caption, link)
-            return service.post_reel_now(acc_id, self.media_path, caption, self.cover_path)
+            return service.post_reel_now(
+                acc_id,
+                self.media_path,
+                caption,
+                self.cover_path,
+                pin_comment=pin_comment or None,
+            )
 
         def done(res):
             btn = "📸  Publicar Story agora" if self.mode == "story" else "🚀  Publicar Reel agora"
             self.publish_btn.configure(state="normal", text=btn)
             if res.get("ok"):
-                msg = "Story publicado com sucesso!" if self.mode == "story" else "Reel publicado com sucesso!"
+                if self.mode == "story":
+                    msg = "Story publicado com sucesso!"
+                elif res.get("comment_pinned"):
+                    msg = "Reel publicado · comentário fixado!"
+                elif pin_comment and res.get("comment_error"):
+                    msg = "Reel ok, mas comentário não fixou"
+                else:
+                    msg = "Reel publicado com sucesso!"
                 self.app.toast(msg, "success")
             else:
                 self.app.toast(res.get("message", "Falha ao publicar"), "error")

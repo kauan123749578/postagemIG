@@ -214,6 +214,8 @@ class Automation(Base):
     stagger_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stagger_min_minutes: Mapped[int] = mapped_column(Integer, default=2)
     stagger_max_minutes: Mapped[int] = mapped_column(Integer, default=8)
+    # Comentário opcional postado e fixado após cada Reel
+    pin_comment: Mapped[str] = mapped_column(Text, default="")
     # draft | paused | active | done | error
     status: Mapped[str] = mapped_column(String(20), default="draft")
     total_posts: Mapped[int] = mapped_column(Integer, default=0)
@@ -283,6 +285,9 @@ def _ensure_columns() -> None:
             "link_y": "REAL DEFAULT 0.8",
             "link_w": "REAL DEFAULT 0.6",
             "link_h": "REAL DEFAULT 0.068625",
+        },
+        "automations": {
+            "pin_comment": "TEXT DEFAULT ''",
         },
     }
     with engine.begin() as conn:

@@ -77,6 +77,7 @@ def _automation_dict(a: Automation, db) -> dict:
         "stagger_enabled": bool(a.stagger_enabled),
         "stagger_min_minutes": a.stagger_min_minutes,
         "stagger_max_minutes": a.stagger_max_minutes,
+        "pin_comment": getattr(a, "pin_comment", "") or "",
         "status": a.status,
         "total_posts": a.total_posts,
         "jobs_pending": pending,
@@ -113,6 +114,7 @@ def create_automation(
     stagger_min_minutes: int = 2,
     stagger_max_minutes: int = 8,
     content_type: str = "reel",
+    pin_comment: str = "",
 ) -> dict:
     caption = (caption or "").strip()
     if not caption:
@@ -127,6 +129,7 @@ def create_automation(
     stagger_min = max(0, int(stagger_min_minutes or 0))
     stagger_max = max(stagger_min, int(stagger_max_minutes or stagger_min))
     name = (name or "").strip() or f"Reels a cada {interval_minutes} min"
+    pin_comment = (pin_comment or "").strip()
 
     last_err: Exception | None = None
     for attempt in range(5):
@@ -144,6 +147,7 @@ def create_automation(
                     stagger_enabled=bool(stagger_enabled),
                     stagger_min_minutes=stagger_min,
                     stagger_max_minutes=stagger_max,
+                    pin_comment=pin_comment,
                     status=status,
                 )
                 db.add(a)
@@ -584,6 +588,7 @@ def process_automation_job(job_id: int) -> bool:
     video_path = ""
     caption = ""
     cover_path = ""
+    pin_comment = ""
 
     db = SessionLocal()
     try:
@@ -612,6 +617,7 @@ def process_automation_job(job_id: int) -> bool:
         video_path = job.video_path
         caption = job.caption or ""
         cover_path = job.cover_path or ""
+        pin_comment = (getattr(auto, "pin_comment", None) or "").strip()
     finally:
         db.close()
 
@@ -624,6 +630,7 @@ def process_automation_job(job_id: int) -> bool:
         video_path,
         caption,
         cover_path or None,
+        pin_comment=pin_comment or None,
     )
 
     db = SessionLocal()
@@ -634,7 +641,7 @@ def process_automation_job(job_id: int) -> bool:
             return True
         if result.get("ok"):
             job.status = "posted"
-            job.media_id = str(result.get("media_id") or "")
+            job.media_id = str(result.get("media_pk") or result.get("media_id") or "")
             job.posted_at = _now()
             if auto:
                 auto.total_posts = int(auto.total_posts or 0) + 1

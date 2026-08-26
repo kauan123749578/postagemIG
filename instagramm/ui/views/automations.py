@@ -337,6 +337,15 @@ class AutomationsView(BaseView):
             body,
             text="Obrigatória. Fixa: todas as contas usam o mesmo texto. Sem legenda não cria.",
             font=(theme.FONT, 11), text_color=theme.MUTED, wraplength=720, justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
+        widgets.field_label(body, "Comentário fixado (opcional)").pack(anchor="w")
+        self.pin_comment_entry = widgets.entry(body, placeholder="Ex.: Link na bio 🔥")
+        self.pin_comment_entry.pack(fill="x", pady=(4, 4))
+        ctk.CTkLabel(
+            body,
+            text="Após cada Reel, o app comenta e fixa esse texto automaticamente.",
+            font=(theme.FONT, 11), text_color=theme.MUTED, wraplength=720, justify="left",
         ).pack(anchor="w", pady=(0, 4))
 
         # Mídia
@@ -609,6 +618,7 @@ class AutomationsView(BaseView):
             stagger_enabled=bool(self.stagger_var.get()),
             stagger_min_minutes=smin,
             stagger_max_minutes=smax,
+            pin_comment=self.pin_comment_entry.get().strip(),
         )
 
         self._creating = True
@@ -643,6 +653,10 @@ class AutomationsView(BaseView):
             self.app.toast(result.get("message") or "Ativada", "success")
             self.caption.delete("1.0", "end")
             self.name_entry.delete(0, "end")
+            try:
+                self.pin_comment_entry.delete(0, "end")
+            except Exception:  # noqa: BLE001
+                pass
             self._clear_videos()
             self._clear_cover()
             self._clear_accounts()

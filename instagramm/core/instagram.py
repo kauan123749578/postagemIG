@@ -843,8 +843,18 @@ def warm_session(
     return s, cl.get_settings()
 
 
-def post_reel(account, video_path: str, caption: str = "", cover_path: str | None = None) -> dict[str, Any]:
-    """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings}."""
+def post_reel(
+    account,
+    video_path: str,
+    caption: str = "",
+    cover_path: str | None = None,
+    *,
+    pin_comment: str | None = None,
+) -> dict[str, Any]:
+    """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings, ...}."""
+    import random
+    import time
+
     from core import activity
 
     video = Path(video_path)
@@ -854,6 +864,8 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     label = getattr(account, "username", None) or getattr(account, "name", None) or ""
     if getattr(account, "username", None):
         label = f"@{account.username}"
+
+    pin_text = (pin_comment or "").strip()
 
     cleaned: Path | None = None
     try:
@@ -884,11 +896,42 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         except Exception as exc:  # noqa: BLE001
             raise InstagramError(f"Falha ao gerar capa do vídeo: {exc}") from exc
 
+    comment_pinned = False
+    comment_error = ""
+
     try:
-        activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
+        activity.set_posting(label, "feed", "Abrindo feed (pré-post)…")
 
         def work(cl):
-            return cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
+            nonlocal comment_pinned, comment_error
+            # Simula abrir o app antes do upload (menos "cold upload")
+            try:
+                cl.get_timeline_feed("cold_start_fetch")
+            except Exception as feed_exc:  # noqa: BLE001
+                logger.warning("Pré-post feed falhou (%s) — seguindo com o upload", feed_exc)
+            pause = random.uniform(3.0, 8.0)
+            activity.set_posting(label, "feed", f"Aguardando {pause:.0f}s antes de enviar…")
+            time.sleep(pause)
+
+            activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
+            media = cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
+
+            if pin_text:
+                activity.set_posting(label, "comment", "Comentando e fixando no Reel…")
+                try:
+                    mid = str(getattr(media, "id", None) or media.pk)
+                    comment = cl.media_comment(mid, pin_text)
+                    cpk = int(getattr(comment, "pk", 0) or 0)
+                    if cpk:
+                        cl.comment_pin(mid, cpk)
+                        comment_pinned = True
+                    else:
+                        comment_error = "Comentário criado sem pk para fixar"
+                except Exception as cexc:  # noqa: BLE001
+                    comment_error = str(cexc)
+                    logger.warning("Falha ao comentar/fixar (%s)", cexc)
+
+            return media
 
         media, settings = _run_authed(account, work)
     except InstagramError:
@@ -911,6 +954,8 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         "media_pk": str(media.pk),
         "code": getattr(media, "code", ""),
         "settings": settings,
+        "comment_pinned": comment_pinned,
+        "comment_error": comment_error,
     }
 
 

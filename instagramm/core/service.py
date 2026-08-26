@@ -831,7 +831,14 @@ def can_post(account_id: int) -> tuple[bool, str]:
         return True, "ok"
 
 
-def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_path: str | None = None) -> dict:
+def post_reel_now(
+    account_id: int,
+    video_path: str,
+    caption: str = "",
+    cover_path: str | None = None,
+    *,
+    pin_comment: str | None = None,
+) -> dict:
     """Publica um Reel imediatamente e registra no log."""
     from core import activity
 
@@ -843,7 +850,13 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
         label = f"@{acc.username}" if acc.username else (acc.name or "")
         try:
             activity.set_posting(label, "start", "Iniciando publicação do Reel…")
-            result = ig.post_reel(acc, video_path, final_caption, cover_path)
+            result = ig.post_reel(
+                acc,
+                video_path,
+                final_caption,
+                cover_path,
+                pin_comment=pin_comment,
+            )
             acc.session_json = json.dumps(result["settings"])
             acc.status = "healthy"
             acc.status_message = "Conectada"
@@ -859,9 +872,24 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             ))
             link = f"https://instagram.com/reel/{result.get('code')}" if result.get("code") else ""
             metrics.bump("post")
-            notify.log_event(f"Reel publicado 🎬 {link}".strip(), "success", acc.name)
-            activity.clear(delay_message="Reel publicado com sucesso", kind="success")
-            return {"ok": True, "media_pk": result["media_pk"], "code": result.get("code", "")}
+            extra = ""
+            if (pin_comment or "").strip():
+                if result.get("comment_pinned"):
+                    extra = " · comentário fixado"
+                elif result.get("comment_error"):
+                    extra = f" · comentário não fixado ({result.get('comment_error')})"
+            notify.log_event(f"Reel publicado 🎬 {link}{extra}".strip(), "success", acc.name)
+            activity.clear(
+                delay_message="Reel publicado com sucesso" + (" · comentário fixado" if result.get("comment_pinned") else ""),
+                kind="success",
+            )
+            return {
+                "ok": True,
+                "media_pk": result["media_pk"],
+                "code": result.get("code", ""),
+                "comment_pinned": bool(result.get("comment_pinned")),
+                "comment_error": result.get("comment_error") or "",
+            }
         except ig.InstagramError as exc:
             db.add(PostLog(
                 account_id=acc.id,
