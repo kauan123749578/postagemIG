@@ -321,7 +321,15 @@ class DashboardView(BaseView):
 
         posts = stats.get("posts_today", stats.get("posts_24h", 0))
         self.stat_values["posts_today"].configure(text=str(posts))
-        self._set_badge("posts_today", "")
+        by_acc = stats.get("posts_by_account") or []
+        if by_acc:
+            detail = " · ".join(
+                f"{a.get('name') or a.get('username') or 'Conta'}: {a.get('count', 0)}"
+                for a in by_acc[:5]
+            )
+            self._set_badge("posts_today", detail)
+        else:
+            self._set_badge("posts_today", "")
 
         rate = float(stats.get("success_rate", 0) or 0)
         self.stat_values["success_rate"].configure(text=f"{rate:.1f}%")
@@ -348,9 +356,20 @@ class DashboardView(BaseView):
                 row, text=item.get("name") or "Automação",
                 font=(theme.FONT, 12, "bold"), text_color=theme.TEXT, anchor="w",
             ).pack(fill="x", padx=10, pady=(8, 0))
+            pending = item.get("pending", 0)
+            posted = item.get("total_posts", 0)
+            by_acc = item.get("posted_by_account") or []
+            if by_acc:
+                acc_txt = " · ".join(
+                    f"{a.get('name') or a.get('username') or 'Conta'}: {a.get('count', 0)}"
+                    for a in by_acc
+                )
+                line = f"{posted} ok ({acc_txt}) · {pending} na fila"
+            else:
+                line = f"{posted} ok · {pending} na fila"
             ctk.CTkLabel(
                 row,
-                text=f"a cada {item.get('interval_minutes')} min · {item.get('pending', 0)} na fila",
+                text=f"a cada {item.get('interval_minutes')} min · {line}",
                 font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w",
             ).pack(fill="x", padx=10, pady=(0, 2))
             next_at = item.get("next_at") or ""

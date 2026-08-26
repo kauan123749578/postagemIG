@@ -734,6 +734,8 @@ def automation_stats() -> dict:
 
 
 def list_active_automations_summary(limit: int = 8) -> list[dict]:
+    from sqlalchemy import func
+
     with svc.session_scope() as db:
         rows = (
             db.query(Automation)
@@ -748,6 +750,25 @@ def list_active_automations_summary(limit: int = 8) -> list[dict]:
                 AutomationJob.automation_id == a.id,
                 AutomationJob.status == "pending",
             ).count()
+            posted_total = db.query(AutomationJob).filter(
+                AutomationJob.automation_id == a.id,
+                AutomationJob.status == "posted",
+            ).count()
+            per_acc_rows = (
+                db.query(Account.name, Account.username, func.count(AutomationJob.id))
+                .join(AutomationJob, AutomationJob.account_id == Account.id)
+                .filter(
+                    AutomationJob.automation_id == a.id,
+                    AutomationJob.status == "posted",
+                )
+                .group_by(Account.id)
+                .order_by(func.count(AutomationJob.id).desc())
+                .all()
+            )
+            posted_by_account = [
+                {"name": n or u or "Conta", "username": u or "", "count": int(c)}
+                for n, u, c in per_acc_rows
+            ]
             next_job = (
                 db.query(AutomationJob)
                 .filter(
@@ -768,7 +789,8 @@ def list_active_automations_summary(limit: int = 8) -> list[dict]:
                 "name": a.name or f"Automação #{a.id}",
                 "interval_minutes": a.interval_minutes,
                 "pending": pending,
-                "total_posts": a.total_posts or 0,
+                "total_posts": posted_total,
+                "posted_by_account": posted_by_account,
                 "next_at": next_at,
             })
         return out

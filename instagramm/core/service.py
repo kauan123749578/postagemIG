@@ -1235,6 +1235,20 @@ def stop_all_loops() -> int:
 
 # ---------------- Agendamentos ----------------
 
+def _pair_media_times(
+    media_paths: list[str],
+    schedule_times: list[datetime],
+) -> list[tuple[str, datetime]]:
+    """Emparelha mídia[i] com horário[i] — 1 story por slot (não produto cartesiano)."""
+    if not media_paths or not schedule_times:
+        return []
+    n = max(len(media_paths), len(schedule_times))
+    return [
+        (media_paths[i % len(media_paths)], schedule_times[i % len(schedule_times)])
+        for i in range(n)
+    ]
+
+
 def add_scheduled(
     account_id: int,
     video_path: str,
@@ -1281,7 +1295,7 @@ def schedule_stories(
     link_w: float = 0.6,
     link_h: float = 0.068625,
 ) -> dict:
-    """Agenda stories: cada mídia × horário × conta."""
+    """Agenda stories: cada par mídia+horário × conta (1 story por horário agendado)."""
     if not account_ids:
         return {"ok": False, "message": "Selecione pelo menos uma conta"}
     if not media_paths:
@@ -1292,6 +1306,10 @@ def schedule_stories(
     imported = [import_media_for_story(p) for p in media_paths if Path(p).exists()]
     if not imported:
         return {"ok": False, "message": "Nenhuma mídia válida"}
+
+    pairs = _pair_media_times(imported, schedule_times)
+    if not pairs:
+        return {"ok": False, "message": "Nenhum par mídia/horário válido"}
 
     created = 0
     with session_scope() as db:
@@ -1308,25 +1326,24 @@ def schedule_stories(
         for acc_id in account_ids:
             if acc_id not in healthy:
                 continue
-            for local in imported:
-                for when in schedule_times:
-                    db.add(ScheduledPost(
-                        account_id=acc_id,
-                        post_type="story",
-                        video_path=local,
-                        caption=caption or "",
-                        link_url=link_url or "",
-                        link_text=link_text or "",
-                        link_x=float(link_x),
-                        link_y=float(link_y),
-                        link_w=float(link_w),
-                        link_h=float(link_h),
-                        scheduled_at=when,
-                        status="pending",
-                    ))
-                    created += 1
+            for local, when in pairs:
+                db.add(ScheduledPost(
+                    account_id=acc_id,
+                    post_type="story",
+                    video_path=local,
+                    caption=caption or "",
+                    link_url=link_url or "",
+                    link_text=link_text or "",
+                    link_x=float(link_x),
+                    link_y=float(link_y),
+                    link_w=float(link_w),
+                    link_h=float(link_h),
+                    scheduled_at=when,
+                    status="pending",
+                ))
+                created += 1
     notify.log_event(f"{created} story(s) agendado(s)", "success")
-    return {"ok": True, "message": f"{created} publicação(ões) agendada(s)", "count": created}
+    return {"ok": True, "message": f"{created} story(s) agendado(s)", "count": created}
 
 
 def import_media_for_story(src: str) -> str:
@@ -1405,6 +1422,9 @@ def process_scheduled_post(post_id: int) -> bool:
             return False
         acc_id = post.account_id
         post_type = getattr(post, "post_type", None) or "reel"
+        # Agendamentos antigos sem post_type mas com link = story
+        if post_type == "reel" and (getattr(post, "link_url", "") or "").strip():
+            post_type = "story"
         media = post.video_path
         caption = post.caption or ""
         cover = post.cover_path or None
@@ -1466,17 +1486,46 @@ def cancel_scheduled(post_id: int) -> None:
 
 
 def dashboard_stats() -> dict:
+    from sqlalchemy import func
+
+    local_now = datetime.now().astimezone()
+    day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_utc = day_start.astimezone(timezone.utc)
+
     with session_scope() as db:
         total = db.query(Account).count()
         connected = db.query(Account).filter(Account.status == "healthy").count()
         autos = db.query(Automation).filter(Automation.status == "active").count()
         jobs_pending = db.query(AutomationJob).filter(AutomationJob.status == "pending").count()
-        day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        posts_ok = db.query(PostLog).filter(PostLog.status == "success", PostLog.posted_at >= day_ago).count()
-        posts_fail = db.query(PostLog).filter(PostLog.status != "success", PostLog.posted_at >= day_ago).count()
+        posts_ok = db.query(PostLog).filter(
+            PostLog.status == "success",
+            PostLog.posted_at >= day_start_utc,
+        ).count()
+        posts_fail = db.query(PostLog).filter(
+            PostLog.status != "success",
+            PostLog.posted_at >= day_start_utc,
+        ).count()
         attempts = posts_ok + posts_fail
         success_rate = (posts_ok / attempts * 100.0) if attempts else 0.0
         pending = db.query(ScheduledPost).filter(ScheduledPost.status == "pending").count()
+
+        per_account_rows = (
+            db.query(Account.name, Account.username, func.count(PostLog.id))
+            .join(PostLog, PostLog.account_id == Account.id)
+            .filter(PostLog.status == "success", PostLog.posted_at >= day_start_utc)
+            .group_by(Account.id)
+            .order_by(func.count(PostLog.id).desc())
+            .all()
+        )
+        posts_by_account = [
+            {
+                "name": name or username or "Conta",
+                "username": username or "",
+                "count": int(cnt),
+            }
+            for name, username, cnt in per_account_rows
+        ]
+
         return {
             "accounts": total,
             "connected": connected,
@@ -1484,6 +1533,7 @@ def dashboard_stats() -> dict:
             "jobs_pending": jobs_pending,
             "posts_24h": posts_ok,
             "posts_today": posts_ok,
+            "posts_by_account": posts_by_account,
             "success_rate": round(success_rate, 1),
             "scheduled_pending": pending,
             "loops_running": autos,

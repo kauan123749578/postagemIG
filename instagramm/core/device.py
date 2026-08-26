@@ -28,16 +28,21 @@ def _dev(
     resolution: str = "720x1600",
     android_version: int = 33,
     android_release: str = "13",
+    app_version: str | None = None,
+    version_code: str | None = None,
+    locale: str = "pt_BR",
 ) -> dict[str, Any]:
+    ver = app_version or APP_VERSION
+    vcode = version_code or VERSION_CODE
     ua = (
-        f"Instagram {APP_VERSION} Android "
+        f"Instagram {ver} Android "
         f"({android_version}/{android_release}; {dpi}; {resolution}; "
-        f"{manufacturer}; {model}; {device}; {cpu}; pt_BR; {VERSION_CODE})"
+        f"{manufacturer}; {model}; {device}; {cpu}; {locale}; {vcode})"
     )
     return {
         "key": key,
         "label": label,
-        "app_version": APP_VERSION,
+        "app_version": ver,
         "android_version": android_version,
         "android_release": android_release,
         "dpi": dpi,
@@ -46,16 +51,31 @@ def _dev(
         "device": device,
         "model": model,
         "cpu": cpu,
-        "version_code": VERSION_CODE,
+        "version_code": vcode,
         "bloks_versioning_id": BLOKS_VERSIONING_ID,
         "user_agent": ua,
     }
 
 
-# Ordem = preferência de atribuição em contas novas (Samsung primeiro, já validado)
+# Ordem = preferência de atribuição em contas novas (Pixel 8 Pro primeiro — validado na web)
 # Só Android: o Phantom/instagrapi usa API Android. iPhone (iOS) = outro protocolo/UA
 # e costuma quebrar login, 2FA ou cair a sessão — não misturar.
 DEVICE_POOL: list[dict[str, Any]] = [
+    _dev(
+        key="pixel_8_pro",
+        label="Google Pixel 8 Pro",
+        manufacturer="Google/google",
+        device="husky",
+        model="Pixel 8 Pro",
+        cpu="husky",
+        dpi="480dpi",
+        resolution="1344x2992",
+        android_version=34,
+        android_release="14",
+        app_version="428.0.0.47.67",
+        version_code="961145276",
+        locale="en_US",
+    ),
     _dev(
         key="samsung_m04",
         label="Samsung Galaxy F04 (SM-E045F)",
@@ -323,7 +343,7 @@ def label_for_device_key(key: str | None) -> str:
 def get_device_profile(key: str | None) -> dict[str, Any]:
     if key and key in DEVICE_BY_KEY:
         return dict(DEVICE_BY_KEY[key])
-    return dict(DEVICE_BY_KEY["samsung_m04"])
+    return dict(DEVICE_BY_KEY["pixel_8_pro"])
 
 
 def device_key_from_settings(settings: dict | None) -> str:
@@ -383,7 +403,7 @@ def apply_device(cl, profile: dict[str, Any] | str | None = None) -> bool:
         elif isinstance(profile, dict) and profile.get("model"):
             prof = dict(profile)
         else:
-            prof = get_device_profile("samsung_m04")
+            prof = get_device_profile("pixel_8_pro")
 
         existing = getattr(cl, "device_settings", None) or {}
         bloks = (

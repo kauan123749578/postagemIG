@@ -100,8 +100,14 @@ def _ensure_phantom_path() -> None:
 
 
 def _new_client():
-    """EnhancedClient (Phantom) com fallback para Client stock."""
+    """Client stock (web) ou Phantom EnhancedClient se USE_PHANTOM=True."""
     from instagrapi import Client
+
+    from core.config import USE_PHANTOM
+
+    if not USE_PHANTOM:
+        logger.info("Cliente = instagrapi Client (stock, igual versão web)")
+        return Client()
 
     _ensure_phantom_path()
     try:
@@ -126,8 +132,8 @@ def build_client(
     from core.device import apply_device, pick_device_key_for_new_account, used_device_keys_from_accounts
 
     cl = _new_client()
-    # Login/2FA: delays baixos — TOTP expira em ~30s; [2,5]s por request estourava o código
-    cl.delay_range = [0, 0.4] if fast else [1, 2]
+    # Login/2FA: delays baixos — TOTP expira em ~30s; postagem normal usa [2,5] como na web
+    cl.delay_range = [0, 0.4] if fast else [2, 5]
     if settings:
         # Fluxo 2FA / sessão salva: NÃO troca o device
         try:
@@ -852,9 +858,6 @@ def post_reel(
     pin_comment: str | None = None,
 ) -> dict[str, Any]:
     """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings, ...}."""
-    import random
-    import time
-
     from core import activity
 
     video = Path(video_path)
@@ -866,23 +869,7 @@ def post_reel(
         label = f"@{account.username}"
 
     pin_text = (pin_comment or "").strip()
-
-    cleaned: Path | None = None
-    try:
-        from core.video_deps import strip_video_metadata
-
-        activity.set_posting(label, "clean", "Limpando metadados do vídeo…")
-        cleaned = strip_video_metadata(video)
-        upload_video = cleaned
-        logger.info("Reel sem metadados: %s → %s", video.name, cleaned.name)
-        activity.set_posting(label, "clean_done", "Metadados limpos — preparando envio…")
-    except Exception as exc:  # noqa: BLE001
-        # se ffmpeg falhar, publica o original (melhor do que bloquear o post)
-        logger.warning("Não limpou metadados (%s) — usando vídeo original", exc)
-        upload_video = video
-        activity.set_posting(
-            label, "clean_skip", "Não limpou metadados — enviando original…", kind="info"
-        )
+    upload_video = video
 
     thumb = Path(cover_path) if cover_path and Path(cover_path).exists() else None
     temp_thumb: Path | None = None
@@ -900,21 +887,14 @@ def post_reel(
     comment_error = ""
 
     try:
-        activity.set_posting(label, "feed", "Abrindo feed (pré-post)…")
+        activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
 
         def work(cl):
             nonlocal comment_pinned, comment_error
-            # Simula abrir o app antes do upload (menos "cold upload")
-            try:
-                cl.get_timeline_feed("cold_start_fetch")
-            except Exception as feed_exc:  # noqa: BLE001
-                logger.warning("Pré-post feed falhou (%s) — seguindo com o upload", feed_exc)
-            pause = random.uniform(3.0, 8.0)
-            activity.set_posting(label, "feed", f"Aguardando {pause:.0f}s antes de enviar…")
-            time.sleep(pause)
-
-            activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
-            media = cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
+            kwargs: dict = {}
+            if thumb:
+                kwargs["thumbnail"] = thumb
+            media = cl.clip_upload(upload_video, caption or "", **kwargs)
 
             if pin_text:
                 activity.set_posting(label, "comment", "Comentando e fixando no Reel…")

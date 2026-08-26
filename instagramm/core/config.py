@@ -35,3 +35,6 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 INSTAGRAM_CAPTION_MAX = 2200
+
+# Postagem igual à versão web: instagrapi stock (sem Phantom) e upload direto.
+USE_PHANTOM = False
