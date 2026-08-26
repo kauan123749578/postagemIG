@@ -76,7 +76,29 @@ class PublishView(BaseView):
             text_color=theme.MUTED,
             anchor="w",
         )
-        self.pin_hint.pack(fill="x", pady=(0, 16))
+        self.pin_hint.pack(fill="x", pady=(0, 8))
+
+        self.trial_var = ctk.BooleanVar(value=False)
+        self.trial_check = ctk.CTkCheckBox(
+            inner,
+            text="Publicar como Trial Reel (teste)",
+            variable=self.trial_var,
+            font=(theme.FONT, 13),
+            text_color=theme.TEXT,
+            fg_color=theme.PRIMARY,
+            hover_color=theme.PRIMARY_HOVER,
+        )
+        self.trial_check.pack(anchor="w", pady=(0, 4))
+        self.trial_hint = ctk.CTkLabel(
+            inner,
+            text="Só funciona se a conta tiver Trial Reels liberado. Não vai pro feed dos seguidores.",
+            font=(theme.FONT, 11),
+            text_color=theme.MUTED,
+            anchor="w",
+            wraplength=640,
+            justify="left",
+        )
+        self.trial_hint.pack(fill="x", pady=(0, 16))
 
         self.publish_btn = widgets.primary_button(inner, "🚀  Publicar Reel agora", self._publish)
         self.publish_btn.pack(fill="x")
@@ -98,6 +120,8 @@ class PublishView(BaseView):
             self.pin_field.pack_forget()
             self.pin_entry.pack_forget()
             self.pin_hint.pack_forget()
+            self.trial_check.pack_forget()
+            self.trial_hint.pack_forget()
             self.link_field.pack(anchor="w", pady=(0, 2), before=self.caption_field)
             self.link_entry.pack(fill="x", pady=(0, 12), before=self.caption_field)
             self.publish_btn.configure(text="📸  Publicar Story agora")
@@ -110,7 +134,9 @@ class PublishView(BaseView):
             self.cover_row.pack(fill="x", pady=(0, 12), before=self.caption_field)
             self.pin_field.pack(anchor="w", pady=(0, 2), after=self.caption_box)
             self.pin_entry.pack(fill="x", pady=(0, 4), after=self.pin_field)
-            self.pin_hint.pack(fill="x", pady=(0, 16), after=self.pin_entry)
+            self.pin_hint.pack(fill="x", pady=(0, 8), after=self.pin_entry)
+            self.trial_check.pack(anchor="w", pady=(0, 4), after=self.pin_hint)
+            self.trial_hint.pack(fill="x", pady=(0, 16), after=self.trial_check)
             self.publish_btn.configure(text="🚀  Publicar Reel agora")
 
     def _fill_accounts(self, accounts):
@@ -161,6 +187,7 @@ class PublishView(BaseView):
             return
         caption = self.caption_box.get("1.0", "end").strip()
         pin_comment = self.pin_entry.get().strip() if self.mode == "reel" else ""
+        use_trial = bool(self.trial_var.get()) if self.mode == "reel" else False
         busy = "Publicando Story..." if self.mode == "story" else "Publicando Reel... (pode demorar)"
         self.publish_btn.configure(state="disabled", text=busy)
 
@@ -175,6 +202,7 @@ class PublishView(BaseView):
                 caption,
                 self.cover_path,
                 pin_comment=pin_comment or None,
+                trial=use_trial,
             )
 
         def done(res):
@@ -183,6 +211,10 @@ class PublishView(BaseView):
             if res.get("ok"):
                 if self.mode == "story":
                     msg = "Story publicado com sucesso!"
+                elif res.get("trial"):
+                    msg = "Trial Reel publicado (teste)!"
+                    if res.get("comment_pinned"):
+                        msg = "Trial Reel + comentário fixado!"
                 elif res.get("comment_pinned"):
                     msg = "Reel publicado · comentário fixado!"
                 elif pin_comment and res.get("comment_error"):
