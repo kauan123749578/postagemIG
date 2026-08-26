@@ -15,6 +15,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """SQLite devolve naive; normaliza para UTC aware antes de comparar."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _parse_json_list(raw: str) -> list:
     try:
         data = json.loads(raw or "[]")
@@ -467,7 +476,8 @@ def resume_automation(automation_id: int, *, gap_seconds: int = 90) -> dict:
 
         cursor = now
         for job in pending_jobs:
-            if job.scheduled_at < now:
+            when = _aware(job.scheduled_at)
+            if when is not None and when < now:
                 job.scheduled_at = cursor
                 cursor = cursor + timedelta(seconds=gap)
 
@@ -600,9 +610,7 @@ def process_automation_job(job_id: int) -> bool:
             job.status = "cancelled"
             db.commit()
             return True
-        sched = job.scheduled_at
-        if sched and sched.tzinfo is None:
-            sched = sched.replace(tzinfo=timezone.utc)
+        sched = _aware(job.scheduled_at)
         if sched and sched > _now():
             return False
 
