@@ -3,6 +3,7 @@ from datetime import datetime
 
 import customtkinter as ctk
 
+from core import activity
 from core import automations as auto_svc
 from core import service
 from ui import theme, widgets
@@ -14,8 +15,9 @@ class DashboardView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
         self.chart_days = 7
+        self._activity_hide_after = None
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(4, weight=1)
+        self.grid_rowconfigure(5, weight=1)
 
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew")
@@ -26,11 +28,34 @@ class DashboardView(BaseView):
         )
         self.refresh_btn.grid(row=0, column=1, sticky="e")
         widgets.subtitle(self, "Visão geral e atividade das automações").grid(
-            row=1, column=0, sticky="w", pady=(0, 14)
+            row=1, column=0, sticky="w", pady=(0, 10)
         )
 
+        # Status ao vivo: limpando metadados / enviando / resultado
+        self.activity_bar = ctk.CTkFrame(
+            self, fg_color=theme.PRIMARY_SOFT, corner_radius=12,
+            border_width=1, border_color=theme.PRIMARY, height=52,
+        )
+        self.activity_bar.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        self.activity_bar.grid_columnconfigure(1, weight=1)
+        self.activity_bar.grid_remove()
+        self.activity_icon = ctk.CTkLabel(
+            self.activity_bar, text="🧹", font=(theme.FONT, 18), width=36,
+        )
+        self.activity_icon.grid(row=0, column=0, padx=(14, 6), pady=12)
+        self.activity_text = ctk.CTkLabel(
+            self.activity_bar, text="", font=(theme.FONT, 13, "bold"),
+            text_color=theme.PRIMARY, anchor="w",
+        )
+        self.activity_text.grid(row=0, column=1, sticky="ew", pady=12)
+        self.activity_account = ctk.CTkLabel(
+            self.activity_bar, text="", font=(theme.FONT, 12),
+            text_color=theme.TEXT_SOFT, anchor="e",
+        )
+        self.activity_account.grid(row=0, column=2, padx=(8, 16), pady=12)
+
         self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.cards_frame.grid(row=2, column=0, sticky="ew")
+        self.cards_frame.grid(row=3, column=0, sticky="ew")
         for i in range(4):
             self.cards_frame.grid_columnconfigure(i, weight=1)
 
@@ -52,7 +77,7 @@ class DashboardView(BaseView):
 
         # Linha: Seu Desempenho | Automações ativas | Próximas publicações
         mid = ctk.CTkFrame(self, fg_color="transparent")
-        mid.grid(row=3, column=0, sticky="ew", pady=(16, 0))
+        mid.grid(row=4, column=0, sticky="ew", pady=(16, 0))
         mid.grid_columnconfigure(0, weight=2)
         mid.grid_columnconfigure(1, weight=1)
         mid.grid_columnconfigure(2, weight=1)
@@ -63,7 +88,7 @@ class DashboardView(BaseView):
         self._build_upcoming(mid)
 
         logcard = widgets.card(self)
-        logcard.grid(row=4, column=0, sticky="nsew", pady=(16, 0))
+        logcard.grid(row=5, column=0, sticky="nsew", pady=(16, 0))
         logcard.grid_columnconfigure(0, weight=1)
         logcard.grid_rowconfigure(1, weight=1)
         widgets.title(logcard, "Últimas publicações", size=14).grid(
@@ -150,10 +175,71 @@ class DashboardView(BaseView):
         self.upcoming_body = widgets.soft_scrollable(card, speed=0.22, height=200)
         self.upcoming_body.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
+    def set_activity(self, state: dict):
+        """Atualiza a faixa de status ao vivo (thread da UI)."""
+        if self._activity_hide_after:
+            try:
+                self.after_cancel(self._activity_hide_after)
+            except Exception:  # noqa: BLE001
+                pass
+            self._activity_hide_after = None
+
+        msg = (state or {}).get("message") or ""
+        account = (state or {}).get("account") or ""
+        phase = (state or {}).get("phase") or ""
+        kind = (state or {}).get("kind") or "info"
+        active = bool((state or {}).get("active"))
+
+        if not msg and not active:
+            self.activity_bar.grid_remove()
+            return
+
+        icons = {
+            "start": "🎬",
+            "clean": "🧹",
+            "clean_done": "✨",
+            "clean_skip": "⚠️",
+            "thumb": "🖼️",
+            "upload": "📤",
+            "done": "✅",
+            "error": "❌",
+            "idle": "ℹ️",
+        }
+        colors = {
+            "info": theme.PRIMARY,
+            "success": theme.SUCCESS,
+            "error": theme.DANGER,
+        }
+        soft = {
+            "info": theme.PRIMARY_SOFT,
+            "success": theme.SUCCESS_SOFT,
+            "error": theme.DANGER_SOFT,
+        }
+        border = {
+            "info": theme.PRIMARY,
+            "success": theme.SUCCESS,
+            "error": theme.DANGER,
+        }
+        color = colors.get(kind, theme.PRIMARY)
+        self.activity_bar.configure(
+            fg_color=soft.get(kind, theme.PRIMARY_SOFT),
+            border_color=border.get(kind, theme.PRIMARY),
+        )
+        self.activity_icon.configure(text=icons.get(phase, "🎬"))
+        self.activity_text.configure(text=msg, text_color=color)
+        self.activity_account.configure(text=account)
+        self.activity_bar.grid()
+
+        if not active and msg:
+            delay = 5000 if kind == "success" else 7000
+            self._activity_hide_after = self.after(delay, self.activity_bar.grid_remove)
+
     def on_show(self):
+        self.set_activity(activity.get())
         self._reload()
 
     def refresh(self):
+        self.set_activity(activity.get())
         self._reload()
 
     def _refresh_metrics(self):

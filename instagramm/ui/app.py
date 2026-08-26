@@ -5,6 +5,7 @@ import traceback
 import customtkinter as ctk
 
 from core import challenge_flow, service
+from core import activity
 from core.config import APP_ICON, APP_NAME, APP_VERSION
 from core.workers import WorkerManager
 from ui import theme
@@ -66,6 +67,7 @@ class App(ctk.CTk):
         self._build_layout()
         self.worker = WorkerManager(on_change=self._on_worker_change)
         self.worker.start()
+        activity.subscribe(self._on_activity)
 
         self.show_view("dashboard")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -285,6 +287,29 @@ class App(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_activity(self, state):
+        """Callback de core.activity (pode vir de thread de fundo)."""
+        self.after(0, lambda s=dict(state or {}): self._apply_activity(s))
+
+    def _apply_activity(self, state: dict):
+        dash = self._views.get("dashboard")
+        if dash is not None:
+            try:
+                dash.set_activity(state)
+            except Exception:  # noqa: BLE001
+                pass
+        msg = (state or {}).get("message") or ""
+        if not msg:
+            return
+        kind = (state or {}).get("kind") or "info"
+        phase = (state or {}).get("phase") or ""
+        account = (state or {}).get("account") or ""
+        # toast curto nas etapas principais (confirma que está postando)
+        if phase in ("clean", "upload", "done") or kind in ("success", "error"):
+            text = f"{msg}  {account}".strip() if account else msg
+            toast_kind = "success" if kind == "success" else ("error" if kind == "error" else "info")
+            self.toast(text, toast_kind)
+
     def _on_worker_change(self):
         # vem de thread de fundo -> agenda refresh na UI
         self.after(0, self._refresh_current)
@@ -306,6 +331,10 @@ class App(ctk.CTk):
                 self.toast("Não foi possível atualizar", "error")
 
     def _on_close(self):
+        try:
+            activity.unsubscribe(self._on_activity)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.worker.stop()
         except Exception:  # noqa: BLE001

@@ -820,12 +820,16 @@ def can_post(account_id: int) -> tuple[bool, str]:
 
 def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_path: str | None = None) -> dict:
     """Publica um Reel imediatamente e registra no log."""
+    from core import activity
+
     with session_scope() as db:
         acc = db.get(Account, account_id)
         if not acc:
             return {"ok": False, "message": "Conta não encontrada"}
         final_caption = caption or acc.default_caption or ""
+        label = f"@{acc.username}" if acc.username else (acc.name or "")
         try:
+            activity.set_posting(label, "start", "Iniciando publicação do Reel…")
             result = ig.post_reel(acc, video_path, final_caption, cover_path)
             acc.session_json = json.dumps(result["settings"])
             acc.status = "healthy"
@@ -843,6 +847,7 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
             link = f"https://instagram.com/reel/{result.get('code')}" if result.get("code") else ""
             metrics.bump("post")
             notify.log_event(f"Reel publicado 🎬 {link}".strip(), "success", acc.name)
+            activity.clear(delay_message="Reel publicado com sucesso", kind="success")
             return {"ok": True, "media_pk": result["media_pk"], "code": result.get("code", "")}
         except ig.InstagramError as exc:
             db.add(PostLog(
@@ -859,7 +864,11 @@ def post_reel_now(account_id: int, video_path: str, caption: str = "", cover_pat
                 acc.status_message = str(exc)
             metrics.bump("error")
             notify.log_event(f"Falha ao publicar Reel: {exc}", "error", acc.name)
+            activity.clear(delay_message=f"Falha ao publicar: {exc}", kind="error")
             return {"ok": False, "message": str(exc), "kind": exc.kind}
+        except Exception as exc:  # noqa: BLE001
+            activity.clear(delay_message=f"Falha ao publicar: {exc}", kind="error")
+            raise
 
 
 def post_story_now(

@@ -832,21 +832,32 @@ def warm_session(
 
 def post_reel(account, video_path: str, caption: str = "", cover_path: str | None = None) -> dict[str, Any]:
     """Publica um Reel usando a sessão salva da conta. Retorna {media_pk, code, settings}."""
+    from core import activity
+
     video = Path(video_path)
     if not video.exists():
         raise InstagramError(f"Vídeo não encontrado: {video_path}")
+
+    label = getattr(account, "username", None) or getattr(account, "name", None) or ""
+    if getattr(account, "username", None):
+        label = f"@{account.username}"
 
     cleaned: Path | None = None
     try:
         from core.video_deps import strip_video_metadata
 
+        activity.set_posting(label, "clean", "Limpando metadados do vídeo…")
         cleaned = strip_video_metadata(video)
         upload_video = cleaned
         logger.info("Reel sem metadados: %s → %s", video.name, cleaned.name)
+        activity.set_posting(label, "clean_done", "Metadados limpos — preparando envio…")
     except Exception as exc:  # noqa: BLE001
         # se ffmpeg falhar, publica o original (melhor do que bloquear o post)
         logger.warning("Não limpou metadados (%s) — usando vídeo original", exc)
         upload_video = video
+        activity.set_posting(
+            label, "clean_skip", "Não limpou metadados — enviando original…", kind="info"
+        )
 
     thumb = Path(cover_path) if cover_path and Path(cover_path).exists() else None
     temp_thumb: Path | None = None
@@ -854,12 +865,15 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
         from core.video_deps import make_video_thumbnail
 
         try:
+            activity.set_posting(label, "thumb", "Gerando capa do vídeo…")
             temp_thumb = make_video_thumbnail(upload_video)
             thumb = temp_thumb
         except Exception as exc:  # noqa: BLE001
             raise InstagramError(f"Falha ao gerar capa do vídeo: {exc}") from exc
 
     try:
+        activity.set_posting(label, "upload", "Enviando Reel ao Instagram…")
+
         def work(cl):
             return cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
 
