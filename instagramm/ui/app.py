@@ -305,7 +305,7 @@ class App(ctk.CTk):
         phase = (state or {}).get("phase") or ""
         account = (state or {}).get("account") or ""
         # toast curto nas etapas principais (confirma que está postando)
-        if phase in ("clean", "upload", "done") or kind in ("success", "error"):
+        if phase in ("clean", "upload", "done", "create_auto") or kind in ("success", "error"):
             text = f"{msg}  {account}".strip() if account else msg
             toast_kind = "success" if kind == "success" else ("error" if kind == "error" else "info")
             self.toast(text, toast_kind)

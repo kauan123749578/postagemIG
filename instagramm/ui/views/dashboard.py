@@ -201,6 +201,7 @@ class DashboardView(BaseView):
             "clean_skip": "⚠️",
             "thumb": "🖼️",
             "upload": "📤",
+            "create_auto": "⚡",
             "done": "✅",
             "error": "❌",
             "idle": "ℹ️",
@@ -332,7 +333,23 @@ class DashboardView(BaseView):
                 row,
                 text=f"a cada {item.get('interval_minutes')} min · {item.get('pending', 0)} na fila",
                 font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w",
-            ).pack(fill="x", padx=10, pady=(0, 4))
+            ).pack(fill="x", padx=10, pady=(0, 2))
+            next_at = item.get("next_at") or ""
+            if next_at:
+                try:
+                    dt = datetime.fromisoformat(next_at.replace("Z", "+00:00"))
+                    if dt.tzinfo is not None:
+                        dt = dt.astimezone()
+                    next_txt = dt.strftime("%d/%m/%Y %H:%M:%S")
+                except ValueError:
+                    next_txt = next_at[:19]
+                ctk.CTkLabel(
+                    row,
+                    text=f"Próximo: {next_txt}",
+                    font=(theme.FONT, 11, "bold"),
+                    text_color=theme.PRIMARY,
+                    anchor="w",
+                ).pack(fill="x", padx=10, pady=(0, 4))
             aid = item.get("id")
             if aid:
                 widgets.ghost_button(
@@ -365,23 +382,57 @@ class DashboardView(BaseView):
                 font=(theme.FONT, 12), text_color=theme.MUTED,
             ).pack(pady=40)
             return
-        for item in items:
-            row = ctk.CTkFrame(self.upcoming_body, fg_color=theme.CARD2, corner_radius=10)
+        for idx, item in enumerate(items):
+            is_next = idx == 0
+            row = ctk.CTkFrame(
+                self.upcoming_body,
+                fg_color=theme.PRIMARY_SOFT if is_next else theme.CARD2,
+                corner_radius=10,
+                border_width=1 if is_next else 0,
+                border_color=theme.PRIMARY if is_next else theme.BORDER,
+            )
             row.pack(fill="x", pady=3)
             when = item.get("scheduled_at") or ""
             try:
                 dt = datetime.fromisoformat(when.replace("Z", "+00:00"))
-                when_txt = dt.strftime("%d/%m %H:%M")
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone()  # horário local do PC
+                when_txt = dt.strftime("%d/%m/%Y %H:%M:%S")
             except ValueError:
-                when_txt = when[:16] if when else "—"
+                when_txt = when[:19] if when else "—"
+            head = ctk.CTkFrame(row, fg_color="transparent")
+            head.pack(fill="x", padx=10, pady=(8, 0))
             ctk.CTkLabel(
-                row, text=f"{item.get('account')} · {when_txt}",
-                font=(theme.FONT, 12, "bold"), text_color=theme.TEXT, anchor="w",
-            ).pack(fill="x", padx=10, pady=(8, 0))
+                head,
+                text=item.get("account") or "Conta",
+                font=(theme.FONT, 12, "bold"),
+                text_color=theme.TEXT,
+                anchor="w",
+            ).pack(side="left")
+            if is_next:
+                ctk.CTkLabel(
+                    head,
+                    text="PRÓXIMO",
+                    font=(theme.FONT, 10, "bold"),
+                    text_color=theme.PRIMARY,
+                    fg_color=theme.CARD3,
+                    corner_radius=6,
+                    height=20,
+                    width=64,
+                ).pack(side="right")
+            ctk.CTkLabel(
+                row,
+                text=when_txt,
+                font=(theme.FONT, 13, "bold"),
+                text_color=theme.PRIMARY if is_next else theme.TEXT,
+                anchor="w",
+            ).pack(fill="x", padx=10, pady=(2, 0))
             ctk.CTkLabel(
                 row,
                 text=f"{item.get('automation')} · {item.get('video') or 'Reel'}",
-                font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w",
+                font=(theme.FONT, 11),
+                text_color=theme.MUTED,
+                anchor="w",
             ).pack(fill="x", padx=10, pady=(0, 8))
 
     def _render_logs(self, logs):

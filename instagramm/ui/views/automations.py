@@ -1,11 +1,13 @@
 """Tela Automações — modelo Instablack local (1 legenda + N vídeos + 1 capa + N contas)."""
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk
 
+from core import activity
 from core import automations as auto_svc
 from core import service
 from core.config import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
@@ -21,12 +23,26 @@ INTERVAL_OPTIONS = [
 ]
 
 
+def _format_local_exact(iso: str) -> str:
+    """Converte ISO (UTC) para horário local com segundos."""
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+        return dt.strftime("%d/%m/%Y %H:%M:%S")
+    except ValueError:
+        return iso[:19] if iso else "—"
+
+
 class AutomationsView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
         self.videos: list[str] = []
         self.cover_path: str = ""
         self._account_vars: dict[int, ctk.BooleanVar] = {}
+        self._creating = False
 
         widgets.title(self, "Automações", size=24).pack(anchor="w")
         widgets.subtitle(
@@ -118,6 +134,7 @@ class AutomationsView(BaseView):
                 width=78,
             ).pack(side="right")
 
+            next_txt = _format_local_exact(item.get("next_at") or "")
             meta = (
                 f"{item.get('video_count', 0)} vídeo(s) · "
                 f"{len(item.get('account_ids') or [])} conta(s) · "
@@ -127,7 +144,17 @@ class AutomationsView(BaseView):
             )
             ctk.CTkLabel(
                 row, text=meta, font=(theme.FONT, 11), text_color=theme.MUTED, anchor="w",
-            ).pack(fill="x", padx=12, pady=(0, 6))
+            ).pack(fill="x", padx=12, pady=(0, 2))
+            if item.get("next_at"):
+                ctk.CTkLabel(
+                    row,
+                    text=f"Próximo post: {next_txt}",
+                    font=(theme.FONT, 12, "bold"),
+                    text_color=theme.PRIMARY,
+                    anchor="w",
+                ).pack(fill="x", padx=12, pady=(0, 6))
+            else:
+                ctk.CTkFrame(row, fg_color="transparent", height=4).pack()
 
             actions = ctk.CTkFrame(row, fg_color="transparent")
             actions.pack(fill="x", padx=12, pady=(0, 10))
@@ -141,6 +168,10 @@ class AutomationsView(BaseView):
                 widgets.primary_button(
                     actions, "▶  Retomar", lambda i=aid: self._resume(i), width=120, height=34,
                 ).pack(side="left", padx=(0, 6))
+
+            widgets.ghost_button(
+                actions, "✏️  Editar contas", lambda i=item: self._edit_accounts(i), width=130, height=34,
+            ).pack(side="left", padx=(0, 6))
 
             widgets.danger_button(
                 actions, "Excluir", lambda i=aid: self._delete(i), width=90, height=34,
@@ -189,6 +220,85 @@ class AutomationsView(BaseView):
             self._reload_list()
 
         self.app.run_async(work, on_done=done)
+
+    def _edit_accounts(self, item: dict):
+        """Popup para marcar/desmarcar contas de uma automação já criada."""
+        auto_id = item.get("id")
+        if not auto_id:
+            return
+        selected = set(int(x) for x in (item.get("account_ids") or []))
+        accounts = service.list_accounts()
+        if not accounts:
+            self.app.toast("Nenhuma conta cadastrada", "error")
+            return
+
+        dlg = ctk.CTkToplevel(self.app)
+        dlg.title("Editar contas")
+        dlg.configure(fg_color=theme.CARD)
+        dlg.geometry("480x520")
+        dlg.resizable(False, False)
+        dlg.transient(self.app)
+        dlg.grab_set()
+
+        widgets.title(dlg, "Editar contas", size=17).pack(pady=(20, 4), padx=20, anchor="w")
+        widgets.subtitle(
+            dlg,
+            f"Automação: {item.get('name') or auto_id}\nMarque as contas que entram nesta fila.",
+        ).pack(padx=20, anchor="w")
+
+        scroll = widgets.soft_scrollable(dlg, speed=0.25)
+        scroll.pack(fill="both", expand=True, padx=16, pady=12)
+
+        vars_map: dict[int, ctk.BooleanVar] = {}
+        for acc in accounts:
+            aid = acc["id"]
+            var = ctk.BooleanVar(value=aid in selected)
+            vars_map[aid] = var
+            row = ctk.CTkFrame(scroll, fg_color=theme.CARD2, corner_radius=10)
+            row.pack(fill="x", pady=3)
+            status = acc.get("status") or "unknown"
+            color = theme.STATUS_COLORS.get(status, theme.MUTED)
+            label = theme.STATUS_LABELS.get(status, status)
+            ctk.CTkCheckBox(
+                row,
+                text=f"{acc.get('name') or 'Conta'}  @{acc.get('username') or '—'}",
+                variable=var,
+                font=(theme.FONT, 12),
+                text_color=theme.TEXT,
+                fg_color=theme.PRIMARY,
+            ).pack(side="left", padx=12, pady=10)
+            ctk.CTkLabel(row, text=label, font=(theme.FONT, 11, "bold"), text_color=color).pack(
+                side="right", padx=12
+            )
+
+        btns = ctk.CTkFrame(dlg, fg_color="transparent")
+        btns.pack(fill="x", padx=20, pady=(0, 18))
+
+        def save():
+            ids = [aid for aid, var in vars_map.items() if var.get()]
+            if not ids:
+                self.app.toast("Selecione pelo menos uma conta", "error")
+                return
+            save_btn.configure(state="disabled", text="Salvando...")
+
+            def work():
+                return auto_svc.update_automation_accounts(auto_id, ids)
+
+            def done(res):
+                dlg.destroy()
+                if res.get("ok"):
+                    self.app.toast(res.get("message") or "Contas atualizadas", "success")
+                else:
+                    self.app.toast(res.get("message") or "Falha ao salvar", "error")
+                self._reload_list()
+
+            self.app.run_async(work, on_done=done)
+
+        widgets.ghost_button(btns, "Cancelar", dlg.destroy, height=40).pack(
+            side="left", expand=True, fill="x", padx=(0, 6)
+        )
+        save_btn = widgets.primary_button(btns, "Salvar contas", save, height=40)
+        save_btn.pack(side="left", expand=True, fill="x", padx=(6, 0))
 
     # ---------- form ----------
     def _build_form(self):
@@ -329,9 +439,10 @@ class AutomationsView(BaseView):
         self.accounts_list = ctk.CTkFrame(abody, fg_color="transparent")
         self.accounts_list.pack(fill="x")
 
-        widgets.primary_button(
+        self.create_btn = widgets.primary_button(
             self.scroll, "Criar e ativar automação", self._create, height=48,
-        ).pack(fill="x", pady=(4, 28))
+        )
+        self.create_btn.pack(fill="x", pady=(4, 28))
 
     # ---------- picks ----------
     def _pick_videos(self):
@@ -464,6 +575,8 @@ class AutomationsView(BaseView):
         return 10
 
     def _create(self):
+        if self._creating:
+            return
         caption = self.caption.get("1.0", "end").strip()
         if not caption:
             self.app.toast("Legenda obrigatória", "error")
@@ -494,10 +607,16 @@ class AutomationsView(BaseView):
             stagger_max_minutes=smax,
         )
 
+        self._creating = True
+        self.create_btn.configure(state="disabled", text="Criando automação…")
+        activity.set_posting("", "create_auto", "Criando automação…")
+        self.app.toast("Criando automação…", "info")
+
         def work():
             created = auto_svc.create_automation(**payload)
             if not created.get("ok"):
                 return created
+            activity.set_posting("", "create_auto", "Ativando e montando a fila…")
             activated = auto_svc.activate_automation(created["id"])
             if not activated.get("ok"):
                 return {
@@ -510,9 +629,13 @@ class AutomationsView(BaseView):
             }
 
         def done(result):
+            self._creating = False
+            self.create_btn.configure(state="normal", text="Criar e ativar automação")
             if not result.get("ok"):
+                activity.clear(delay_message=result.get("message") or "Falha ao criar", kind="error")
                 self.app.toast(result.get("message") or "Erro", "error")
                 return
+            activity.clear(delay_message="Automação criada e ativada", kind="success")
             self.app.toast(result.get("message") or "Ativada", "success")
             self.caption.delete("1.0", "end")
             self.name_entry.delete(0, "end")
@@ -521,7 +644,13 @@ class AutomationsView(BaseView):
             self._clear_accounts()
             self._reload_list()
 
-        self.app.run_async(work, on_done=done)
+        def err(exc):
+            self._creating = False
+            self.create_btn.configure(state="normal", text="Criar e ativar automação")
+            activity.clear(delay_message=str(exc), kind="error")
+            self.app.toast(str(exc), "error")
+
+        self.app.run_async(work, on_done=done, on_error=err)
 
     def on_show(self):
         self._reload_accounts()

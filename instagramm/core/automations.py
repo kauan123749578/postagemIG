@@ -38,6 +38,21 @@ def _automation_dict(a: Automation, db) -> dict:
         AutomationJob.automation_id == a.id,
         AutomationJob.status == "error",
     ).count()
+    next_job = (
+        db.query(AutomationJob)
+        .filter(
+            AutomationJob.automation_id == a.id,
+            AutomationJob.status == "pending",
+        )
+        .order_by(AutomationJob.scheduled_at)
+        .first()
+    )
+    next_at = ""
+    if next_job and next_job.scheduled_at:
+        when = next_job.scheduled_at
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        next_at = when.isoformat()
     accounts = []
     for aid in account_ids:
         acc = db.get(Account, aid)
@@ -67,6 +82,7 @@ def _automation_dict(a: Automation, db) -> dict:
         "jobs_pending": pending,
         "jobs_posted": posted,
         "jobs_error": errors,
+        "next_at": next_at,
         "last_error": a.last_error,
         "created_at": a.created_at.isoformat() if a.created_at else "",
         "activated_at": a.activated_at.isoformat() if a.activated_at else "",
@@ -146,15 +162,157 @@ def create_automation(
     return {"ok": False, "message": f"Erro ao criar: {last_err}"}
 
 
+def _append_jobs_for_accounts(db, a: Automation, new_account_ids: list[int]) -> int:
+    """Agenda posts só para contas novas, sem apagar a fila existente."""
+    videos = [v for v in _parse_json_list(a.videos_json) if v and Path(v).exists()]
+    if not videos or not new_account_ids:
+        return 0
+
+    accounts: list[Account] = []
+    for aid in new_account_ids:
+        acc = db.get(Account, int(aid))
+        if acc and acc.is_active and acc.status == "healthy" and acc.session_json:
+            accounts.append(acc)
+    if not accounts:
+        return 0
+
+    cover = a.cover_path if a.cover_path and Path(a.cover_path).exists() else ""
+    caption = a.caption
+    interval = max(1, int(a.interval_minutes or 10))
+    stagger_on = bool(a.stagger_enabled)
+    smin = max(0, int(a.stagger_min_minutes or 0))
+    smax = max(smin, int(a.stagger_max_minutes or smin))
+
+    last_pending = (
+        db.query(AutomationJob.scheduled_at)
+        .filter(
+            AutomationJob.automation_id == a.id,
+            AutomationJob.status == "pending",
+        )
+        .order_by(AutomationJob.scheduled_at.desc())
+        .first()
+    )
+    now = _now()
+    if last_pending and last_pending[0]:
+        base = last_pending[0]
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        t = max(base + timedelta(seconds=45), now + timedelta(seconds=45))
+    else:
+        t = now + timedelta(seconds=30)
+
+    created = 0
+    for v_idx, video in enumerate(videos):
+        cycle_start = t
+        last_t = t
+        for a_idx, acc in enumerate(accounts):
+            if a_idx == 0:
+                when = cycle_start
+            elif stagger_on:
+                when = last_t + timedelta(minutes=random.uniform(smin, smax) if smax > 0 else 0)
+            else:
+                when = cycle_start
+            db.add(
+                AutomationJob(
+                    automation_id=a.id,
+                    account_id=acc.id,
+                    video_path=video,
+                    cover_path=cover,
+                    caption=caption,
+                    video_index=v_idx,
+                    account_index=a_idx,
+                    scheduled_at=when,
+                    status="pending",
+                )
+            )
+            created += 1
+            last_t = when
+        t = cycle_start + timedelta(minutes=interval)
+        if t < last_t + timedelta(seconds=30):
+            t = last_t + timedelta(seconds=30)
+    return created
+
+
 def update_automation_accounts(automation_id: int, account_ids: list[int]) -> dict:
+    """Atualiza contas da automação. Contas novas entram na fila; removidas saem dos pending."""
+    wanted = []
+    seen: set[int] = set()
+    for x in account_ids or []:
+        aid = int(x)
+        if aid not in seen:
+            seen.add(aid)
+            wanted.append(aid)
+    if not wanted:
+        return {"ok": False, "message": "Selecione pelo menos uma conta"}
+
     with svc.session_scope() as db:
         a = db.get(Automation, automation_id)
         if not a:
             return {"ok": False, "message": "Automação não encontrada"}
-        if a.status == "active":
-            return {"ok": False, "message": "Pause a automação antes de mudar as contas"}
-        a.account_ids_json = json.dumps([int(x) for x in account_ids])
-        return {"ok": True, "message": "Contas atualizadas"}
+
+        old = [
+            int(x)
+            for x in _parse_json_list(a.account_ids_json)
+            if str(x).isdigit() or isinstance(x, int)
+        ]
+        old_set = set(old)
+        new_set = set(wanted)
+        added = [x for x in wanted if x not in old_set]
+        removed = [x for x in old if x not in new_set]
+
+        a.account_ids_json = json.dumps(wanted)
+
+        cancelled = 0
+        if removed:
+            pending_rm = (
+                db.query(AutomationJob)
+                .filter(
+                    AutomationJob.automation_id == a.id,
+                    AutomationJob.status == "pending",
+                    AutomationJob.account_id.in_(removed),
+                )
+                .all()
+            )
+            for job in pending_rm:
+                job.status = "cancelled"
+                cancelled += 1
+
+        appended = 0
+        if added:
+            # se está ativa (ou tem fila), agenda só as novas; se pausada sem fila, só salva a lista
+            has_pending = (
+                db.query(AutomationJob)
+                .filter(
+                    AutomationJob.automation_id == a.id,
+                    AutomationJob.status == "pending",
+                )
+                .count()
+                > 0
+            )
+            if a.status == "active" or has_pending:
+                appended = _append_jobs_for_accounts(db, a, added)
+            elif a.status in ("paused", "draft", "done", "error") and not has_pending:
+                # fila vazia: na próxima ativação/retomada o _build_jobs usa a lista nova
+                appended = 0
+
+        parts = ["Contas atualizadas"]
+        if added:
+            if appended:
+                parts.append(f"+{len(added)} conta(s) · {appended} post(s) na fila")
+            else:
+                parts.append(f"+{len(added)} conta(s) (entram ao retomar/ativar)")
+        if removed:
+            parts.append(f"-{len(removed)} conta(s)" + (f" · {cancelled} cancelado(s)" if cancelled else ""))
+        msg = " · ".join(parts)
+        notify.log_event(f"Automação editada ({a.name}): {msg}", "info")
+        return {
+            "ok": True,
+            "message": msg,
+            "added": len(added),
+            "removed": len(removed),
+            "jobs_added": appended,
+            "jobs_cancelled": cancelled,
+        }
 
 
 def _build_jobs(db, a: Automation) -> int:
@@ -525,12 +683,28 @@ def list_active_automations_summary(limit: int = 8) -> list[dict]:
                 AutomationJob.automation_id == a.id,
                 AutomationJob.status == "pending",
             ).count()
+            next_job = (
+                db.query(AutomationJob)
+                .filter(
+                    AutomationJob.automation_id == a.id,
+                    AutomationJob.status == "pending",
+                )
+                .order_by(AutomationJob.scheduled_at)
+                .first()
+            )
+            next_at = ""
+            if next_job and next_job.scheduled_at:
+                when = next_job.scheduled_at
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                next_at = when.isoformat()
             out.append({
                 "id": a.id,
                 "name": a.name or f"Automação #{a.id}",
                 "interval_minutes": a.interval_minutes,
                 "pending": pending,
                 "total_posts": a.total_posts or 0,
+                "next_at": next_at,
             })
         return out
 
