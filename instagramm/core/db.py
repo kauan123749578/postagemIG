@@ -12,13 +12,17 @@ from sqlalchemy import (
     create_engine,
     event,
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from core.config import DB_PATH
 
+# NullPool: cada operação abre/fecha conexão — evita SQLite "database is locked"
+# com UI + worker em threads diferentes.
 engine = create_engine(
     f"sqlite:///{DB_PATH.as_posix()}",
-    connect_args={"check_same_thread": False, "timeout": 30},
+    connect_args={"check_same_thread": False, "timeout": 60},
+    poolclass=NullPool,
 )
 
 
@@ -30,7 +34,7 @@ def _sqlite_pragmas(dbapi_conn, _rec):
     try:
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
-        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA busy_timeout=60000")
     finally:
         cur.close()
 

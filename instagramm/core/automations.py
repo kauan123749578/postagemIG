@@ -112,26 +112,38 @@ def create_automation(
     stagger_max = max(stagger_min, int(stagger_max_minutes or stagger_min))
     name = (name or "").strip() or f"Reels a cada {interval_minutes} min"
 
-    with svc.session_scope() as db:
-        status = "paused" if not account_ids else "paused"
-        a = Automation(
-            name=name,
-            content_type=content_type or "reel",
-            caption=caption,
-            cover_path=cover_path or "",
-            videos_json=json.dumps(videos, ensure_ascii=False),
-            account_ids_json=json.dumps(account_ids),
-            interval_minutes=interval_minutes,
-            stagger_enabled=bool(stagger_enabled),
-            stagger_min_minutes=stagger_min,
-            stagger_max_minutes=stagger_max,
-            status=status,
-        )
-        db.add(a)
-        db.flush()
-        auto_id = a.id
-        notify.log_event(f"Automação criada: {name}", "success")
-        return {"ok": True, "id": auto_id, "message": "Automação criada (pausada). Ative quando quiser."}
+    last_err: Exception | None = None
+    for attempt in range(5):
+        try:
+            with svc.session_scope() as db:
+                status = "paused" if not account_ids else "paused"
+                a = Automation(
+                    name=name,
+                    content_type=content_type or "reel",
+                    caption=caption,
+                    cover_path=cover_path or "",
+                    videos_json=json.dumps(videos, ensure_ascii=False),
+                    account_ids_json=json.dumps(account_ids),
+                    interval_minutes=interval_minutes,
+                    stagger_enabled=bool(stagger_enabled),
+                    stagger_min_minutes=stagger_min,
+                    stagger_max_minutes=stagger_max,
+                    status=status,
+                )
+                db.add(a)
+                db.flush()
+                auto_id = a.id
+                notify.log_event(f"Automação criada: {name}", "success")
+                return {"ok": True, "id": auto_id, "message": "Automação criada (pausada). Ative quando quiser."}
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            if "locked" in str(exc).lower() and attempt < 4:
+                import time
+
+                time.sleep(0.25 * (attempt + 1))
+                continue
+            return {"ok": False, "message": f"Erro ao criar: {exc}"}
+    return {"ok": False, "message": f"Erro ao criar: {last_err}"}
 
 
 def update_automation_accounts(automation_id: int, account_ids: list[int]) -> dict:

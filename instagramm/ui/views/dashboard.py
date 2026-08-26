@@ -17,7 +17,14 @@ class DashboardView(BaseView):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
-        widgets.title(self, "Dashboard", size=24).grid(row=0, column=0, sticky="w")
+        head = ctk.CTkFrame(self, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew")
+        head.grid_columnconfigure(0, weight=1)
+        widgets.title(head, "Dashboard", size=24).grid(row=0, column=0, sticky="w")
+        self.refresh_btn = widgets.ghost_button(
+            head, "🔄  Atualizar métricas", self._refresh_metrics, width=170, height=34,
+        )
+        self.refresh_btn.grid(row=0, column=1, sticky="e")
         widgets.subtitle(self, "Visão geral e atividade das automações").grid(
             row=1, column=0, sticky="w", pady=(0, 14)
         )
@@ -148,6 +155,25 @@ class DashboardView(BaseView):
 
     def refresh(self):
         self._reload()
+
+    def _refresh_metrics(self):
+        self.refresh_btn.configure(state="disabled", text="Atualizando...")
+
+        def done(_ok=None):
+            self.refresh_btn.configure(state="normal", text="🔄  Atualizar métricas")
+            self._reload()
+            self.app.toast("Métricas atualizadas", "success")
+
+        def err(exc):
+            self.refresh_btn.configure(state="normal", text="🔄  Atualizar métricas")
+            self.app.toast(str(exc), "error")
+
+        def work():
+            # bate no banco pra garantir dados frescos
+            service.dashboard_stats()
+            return True
+
+        self.app.run_async(work, on_done=done, on_error=err)
 
     def _set_chart_days(self, days: int):
         self.chart_days = days

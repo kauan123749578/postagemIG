@@ -273,13 +273,15 @@ class App(ctk.CTk):
                 result = fn()
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
+                err = exc
                 if on_error:
-                    self.after(0, lambda: on_error(exc))
+                    self.after(0, lambda e=err: on_error(e))
                 else:
-                    self.after(0, lambda: self.toast(str(exc), "error"))
+                    self.after(0, lambda e=err: self.toast(str(e), "error"))
                 return
             if on_done:
-                self.after(0, lambda: on_done(result))
+                payload = result
+                self.after(0, lambda r=payload: on_done(r))
 
         threading.Thread(target=worker, daemon=True).start()
 
