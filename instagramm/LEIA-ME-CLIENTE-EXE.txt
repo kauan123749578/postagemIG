@@ -1,5 +1,5 @@
 ==================================================
-   POSTAGEM IG  -  Guia rapido (versao executavel)
+   INSTABLACK LOCAL  -  Guia rapido (executavel)
 ==================================================
 
 NAO PRECISA INSTALAR PYTHON.
@@ -8,36 +8,36 @@ Basta dar duplo clique no arquivo:  PostagemIG.exe
 --------------------------------------------------
 COMO ABRIR O PROGRAMA
 --------------------------------------------------
-  1. De um duplo clique em:  PostagemIG.exe
-  2. Na primeira vez pode demorar alguns segundos
-     para abrir. Aguarde o painel aparecer.
-  3. Nao apague a pasta "_internal" — ela faz parte
-     do programa.
+  1. Extraia o ZIP numa pasta (ex.: Desktop\PostagemIG).
+  2. De um duplo clique em:  PostagemIG.exe
+  3. Na primeira vez pode demorar alguns segundos.
+  4. Nao apague a pasta "_internal" — faz parte do programa.
+  5. Deixe o ffmpeg.exe na mesma pasta do .exe (ja vem incluso).
 
 --------------------------------------------------
-PRIMEIROS PASSOS DENTRO DO PAINEL
+PRIMEIROS PASSOS
 --------------------------------------------------
-  1. Aba "Contas": conecte sua conta do Instagram
-     (usuario e senha, ou pelo sessionid).
+  1. Aba "Contas": conecte a conta (usuario/senha ou sessionid).
+     Pode colar o secret do autenticador (TOTP) para 2FA automatico.
      Proxy (opcional): ip:porta:usuario:senha
-     Ex.: 185.72.240.96:7132:meuuser:minhasenha
-  2. Aba "Midia": envie seus videos.
-  3. Aba "Publicar" ou "Loop": comece a postar.
-  4. (Opcional) Aba "Configuracoes": ligue os logs no Telegram.
+  2. Aba "Automações": legenda + varios Reels + contas + anti-farm.
+     Dá para editar contas de uma automação já criada.
+  3. Aba "Publicar": post manual de um Reel.
+  4. Aba "Dashboard": ve o proximo post (ex.: Proximo Reels 22h30)
+     e o status ao vivo (limpando metadados / enviando).
+  5. Aba "Logs": historico; use "Limpar logs" quando quiser.
 
 --------------------------------------------------
 SEUS DADOS
 --------------------------------------------------
-  Tudo que voce criar (contas, videos, configuracoes) fica
-  guardado na pasta "data", ao lado do PostagemIG.exe.
-  Faca uma copia dessa pasta "data" de vez em quando para
-  nao perder nada.
+  Contas, sessoes, videos e configuracoes ficam na pasta "data"
+  ao lado do PostagemIG.exe. Faca backup dessa pasta de vez em quando.
 
 --------------------------------------------------
-DICAS PARA EVITAR BLOQUEIO
+DICAS
 --------------------------------------------------
   - Respeite os intervalos entre as postagens.
   - Use proxy residencial por conta se for rodar varias contas.
-  - Use a funcao "Aquecer contas" em contas novas.
+  - Antes de postar, o app limpa metadados do video (ffmpeg).
 
-Qualquer duvida, fale com o suporte.
+Qualquer duvida, fale com quem te enviou o programa.

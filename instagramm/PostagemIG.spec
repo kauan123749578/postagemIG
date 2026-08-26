@@ -25,6 +25,17 @@ local_ffmpeg = Path(SPECPATH) / "ffmpeg.exe"
 if local_ffmpeg.is_file():
     binaries.append((str(local_ffmpeg), "."))
 
+# Ícone do app
+icon_file = Path(SPECPATH) / "logoooo.ico"
+if icon_file.is_file():
+    datas.append((str(icon_file), "."))
+
+# Phantom (login/TLS aprimorado) — pasta irmã de instagramm/
+phantom_dir = Path(SPECPATH).parent / "phantom"
+if phantom_dir.is_dir():
+    datas.append((str(phantom_dir), "phantom"))
+    hiddenimports += collect_submodules("phantom")
+
 # Bibliotecas que precisam levar dados/binários e submódulos junto
 for pkg in ("customtkinter", "instagrapi", "moviepy", "imageio_ffmpeg"):
     d, b, h = collect_all(pkg)
@@ -33,11 +44,18 @@ for pkg in ("customtkinter", "instagrapi", "moviepy", "imageio_ffmpeg"):
     hiddenimports += h
 
 hiddenimports += collect_submodules("PIL")
-hiddenimports += ["instagrapi.utils.video", "core.video_deps"]
+hiddenimports += [
+    "instagrapi.utils.video",
+    "core.video_deps",
+    "core.activity",
+    "core.totp",
+    "pyotp",
+    "curl_cffi",
+]
 
 a = Analysis(
     ["main.py"],
-    pathex=[],
+    pathex=[str(Path(SPECPATH).parent)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -66,6 +84,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(icon_file) if icon_file.is_file() else None,
 )
 
 coll = COLLECT(

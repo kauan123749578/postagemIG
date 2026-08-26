@@ -76,14 +76,27 @@ from core.proxy import normalize_proxy_url
 
 
 def _ensure_phantom_path() -> None:
-    """Garante que a pasta phantom/ (irmã de instagramm/) está no sys.path."""
+    """Garante que a pasta phantom/ está no sys.path (dev e .exe)."""
     import sys
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[2]  # postagemIG/
-    root_s = str(root)
-    if root_s not in sys.path:
-        sys.path.insert(0, root_s)
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        meipass = Path(getattr(sys, "_MEIPASS", "") or "")
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates += [meipass, exe_dir, exe_dir.parent]
+    else:
+        # postagemIG/ (irmã de instagramm/)
+        candidates.append(Path(__file__).resolve().parents[2])
+
+    for root in candidates:
+        if not root or not root.is_dir():
+            continue
+        if (root / "phantom").is_dir():
+            s = str(root)
+            if s not in sys.path:
+                sys.path.insert(0, s)
+            return
 
 
 def _new_client():

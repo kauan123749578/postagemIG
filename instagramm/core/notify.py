@@ -37,3 +37,17 @@ def recent_events(limit: int = 100) -> list[dict]:
         } for r in rows]
     finally:
         db.close()
+
+
+def clear_events() -> int:
+    """Apaga todos os eventos do sistema. Retorna quantos foram removidos."""
+    db = SessionLocal()
+    try:
+        n = db.query(EventLog).delete()
+        db.commit()
+        return int(n or 0)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        raise
+    finally:
+        db.close()

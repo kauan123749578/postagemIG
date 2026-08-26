@@ -3,6 +3,7 @@ import customtkinter as ctk
 
 from core import service
 from ui import theme, widgets
+from ui.dialogs import confirm
 from ui.views.base import BaseView
 
 LEVEL_COLORS = {
@@ -22,8 +23,15 @@ class LogsView(BaseView):
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.pack(fill="x")
         widgets.title(head, "Logs", size=24).pack(side="left")
-        widgets.ghost_button(head, "Atualizar", self._reload, width=120).pack(side="right")
-        widgets.subtitle(self, "Tudo que acontece no sistema — conexões, posts, aquecimento e erros").pack(anchor="w", pady=(0, 12))
+        btns = ctk.CTkFrame(head, fg_color="transparent")
+        btns.pack(side="right")
+        widgets.danger_button(btns, "Limpar logs", self._clear_logs, width=120, height=34).pack(
+            side="left", padx=(0, 8)
+        )
+        widgets.ghost_button(btns, "Atualizar", self._reload, width=120, height=34).pack(side="left")
+        widgets.subtitle(
+            self, "Tudo que acontece no sistema — conexões, posts, aquecimento e erros"
+        ).pack(anchor="w", pady=(0, 12))
 
         self.seg = ctk.CTkSegmentedButton(
             self, values=["Eventos (tudo)", "Publicações"], command=self._on_mode,
@@ -53,6 +61,28 @@ class LogsView(BaseView):
             self.app.run_async(lambda: service.recent_events(120), on_done=self._render_events)
         else:
             self.app.run_async(lambda: service.recent_logs(80), on_done=self._render_posts)
+
+    def _clear_logs(self):
+        if self.mode == "events":
+            msg = "Apagar todos os eventos do sistema? Isso não desfaz."
+            title = "Limpar eventos"
+            work = service.clear_event_logs
+        else:
+            msg = "Apagar o histórico de publicações? Isso não desfaz."
+            title = "Limpar publicações"
+            work = service.clear_post_logs
+
+        if not confirm(self.app, msg, title):
+            return
+
+        def done(res):
+            if res.get("ok"):
+                self.app.toast(res.get("message") or "Logs limpos", "success")
+            else:
+                self.app.toast(res.get("message") or "Falha ao limpar", "error")
+            self._reload()
+
+        self.app.run_async(work, on_done=done)
 
     def _clear(self):
         for c in self.list_frame.winfo_children():

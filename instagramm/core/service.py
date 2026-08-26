@@ -187,6 +187,19 @@ def recent_events(limit: int = 80) -> list[dict]:
     return notify.recent_events(limit)
 
 
+def clear_event_logs() -> dict:
+    """Apaga todos os eventos da tela Logs (aba Eventos)."""
+    n = notify.clear_events()
+    return {"ok": True, "deleted": n, "message": f"{n} evento(s) apagado(s)"}
+
+
+def clear_post_logs() -> dict:
+    """Apaga o histórico de publicações da tela Logs (aba Publicações)."""
+    with session_scope() as db:
+        n = db.query(PostLog).delete()
+        return {"ok": True, "deleted": int(n or 0), "message": f"{n} publicação(ões) apagada(s)"}
+
+
 # ---------------- Contas ----------------
 
 def _account_dict(acc: Account, db) -> dict:
