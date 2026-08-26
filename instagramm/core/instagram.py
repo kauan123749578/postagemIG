@@ -835,20 +835,33 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
     video = Path(video_path)
     if not video.exists():
         raise InstagramError(f"Vídeo não encontrado: {video_path}")
+
+    cleaned: Path | None = None
+    try:
+        from core.video_deps import strip_video_metadata
+
+        cleaned = strip_video_metadata(video)
+        upload_video = cleaned
+        logger.info("Reel sem metadados: %s → %s", video.name, cleaned.name)
+    except Exception as exc:  # noqa: BLE001
+        # se ffmpeg falhar, publica o original (melhor do que bloquear o post)
+        logger.warning("Não limpou metadados (%s) — usando vídeo original", exc)
+        upload_video = video
+
     thumb = Path(cover_path) if cover_path and Path(cover_path).exists() else None
     temp_thumb: Path | None = None
     if not thumb:
         from core.video_deps import make_video_thumbnail
 
         try:
-            temp_thumb = make_video_thumbnail(video)
+            temp_thumb = make_video_thumbnail(upload_video)
             thumb = temp_thumb
         except Exception as exc:  # noqa: BLE001
             raise InstagramError(f"Falha ao gerar capa do vídeo: {exc}") from exc
 
     try:
         def work(cl):
-            return cl.clip_upload(video, caption or "", thumbnail=thumb)
+            return cl.clip_upload(upload_video, caption or "", thumbnail=thumb)
 
         media, settings = _run_authed(account, work)
     except InstagramError:
@@ -860,11 +873,12 @@ def post_reel(account, video_path: str, caption: str = "", cover_path: str | Non
             kind = "login_required"
         raise InstagramError(_friendly(exc), kind=kind) from exc
     finally:
-        if temp_thumb and temp_thumb.is_file():
-            try:
-                temp_thumb.unlink()
-            except OSError:
-                pass
+        for p in (temp_thumb, cleaned):
+            if p and p.is_file():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
 
     return {
         "media_pk": str(media.pk),

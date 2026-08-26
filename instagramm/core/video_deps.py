@@ -98,3 +98,53 @@ def make_video_thumbnail(video_path: str | Path) -> Path:
         err = proc.stderr.decode(errors="ignore").strip() or "erro desconhecido"
         raise RuntimeError(err)
     return thumb
+
+
+def strip_video_metadata(video_path: str | Path, *, dest: Path | None = None) -> Path:
+    """Gera cópia do vídeo sem metadados/chapters (stream copy, sem reencode).
+
+    Equivalente a:
+      ffmpeg -y -i video.mp4 -map_metadata -1 -map_chapters -1 -c:v copy -c:a copy limpo.mp4
+    """
+    bootstrap_video_deps()
+    src = Path(video_path)
+    if not src.is_file():
+        raise FileNotFoundError(f"Vídeo não encontrado: {src}")
+
+    ffmpeg = resolve_ffmpeg_exe()
+    if dest is None:
+        fd, tmp = tempfile.mkstemp(suffix=src.suffix or ".mp4", prefix="postagemig_clean_")
+        os.close(fd)
+        out = Path(tmp)
+    else:
+        out = Path(dest)
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(src),
+        "-map_metadata",
+        "-1",
+        "-map_chapters",
+        "-1",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "copy",
+        str(out),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, timeout=600)
+    if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+        if out.is_file():
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        err = proc.stderr.decode(errors="ignore").strip() or "erro desconhecido"
+        raise RuntimeError(f"Falha ao limpar metadados: {err}")
+    return out
