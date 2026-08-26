@@ -437,10 +437,54 @@ def pause_automation(automation_id: int) -> dict:
         return {"ok": True, "message": f"Pausada — {pending} post(s) guardados na fila", "pending": pending}
 
 
-def resume_automation(automation_id: int, *, gap_seconds: int = 90) -> dict:
-    """Retoma automação pausada: status active + redistribui jobs atrasados."""
+def _redistribute_jobs(
+    a: Automation,
+    jobs: list[AutomationJob],
+    *,
+    start: datetime | None = None,
+) -> datetime:
+    """Reagenda a fila pending com o intervalo e anti-farm da automação (a partir de agora)."""
+    if not jobs:
+        return start or _now()
+
+    interval = max(1, int(a.interval_minutes or 10))
+    stagger_on = bool(a.stagger_enabled)
+    smin = max(0, int(a.stagger_min_minutes or 0))
+    smax = max(smin, int(a.stagger_max_minutes or smin))
+
+    ordered = sorted(
+        jobs,
+        key=lambda j: (int(j.video_index or 0), int(j.account_index or 0), int(j.id or 0)),
+    )
+    by_video: dict[int, list[AutomationJob]] = {}
+    for job in ordered:
+        by_video.setdefault(int(job.video_index or 0), []).append(job)
+
+    t = start or _now()
+    last_overall = t
+    for v_idx in sorted(by_video.keys()):
+        group = by_video[v_idx]
+        cycle_start = t
+        last_t = t
+        for a_idx, job in enumerate(group):
+            if a_idx == 0:
+                when = cycle_start
+            elif stagger_on and smax > 0:
+                when = last_t + timedelta(minutes=random.uniform(smin, smax))
+            else:
+                when = cycle_start
+            job.scheduled_at = when
+            last_t = when
+            last_overall = when
+        t = cycle_start + timedelta(minutes=interval)
+        if t < last_t + timedelta(seconds=30):
+            t = last_t + timedelta(seconds=30)
+    return last_overall
+
+
+def resume_automation(automation_id: int) -> dict:
+    """Retoma automação pausada e reaplica o intervalo configurado na fila."""
     now = _now()
-    gap = max(30, int(gap_seconds))
     with svc.session_scope() as db:
         a = db.get(Automation, automation_id)
         if not a:
@@ -474,24 +518,21 @@ def resume_automation(automation_id: int, *, gap_seconds: int = 90) -> dict:
             notify.log_event(f"Automação retomada (nova fila): {a.name} ({n} posts)", "success")
             return {"ok": True, "message": f"Retomada — {n} publicações agendadas", "jobs": n}
 
-        cursor = now
-        for job in pending_jobs:
-            when = _aware(job.scheduled_at)
-            if when is not None and when < now:
-                job.scheduled_at = cursor
-                cursor = cursor + timedelta(seconds=gap)
+        # Redistribui TODA a fila com o intervalo da automação (ex.: 30 min + anti-farm)
+        _redistribute_jobs(a, pending_jobs, start=now)
+        interval = max(1, int(a.interval_minutes or 10))
 
         a.status = "active"
         a.last_error = ""
         if not a.activated_at:
             a.activated_at = now
         notify.log_event(
-            f"Automação retomada: {a.name} ({len(pending_jobs)} post(s) na fila)",
+            f"Automação retomada: {a.name} ({len(pending_jobs)} post(s), a cada {interval} min)",
             "success",
         )
         return {
             "ok": True,
-            "message": f"Retomada — {len(pending_jobs)} post(s) na fila",
+            "message": f"Retomada — {len(pending_jobs)} post(s) na fila (a cada {interval} min)",
             "jobs": len(pending_jobs),
         }
 
@@ -528,13 +569,9 @@ def list_due_automation_job_ids(limit: int = 5) -> list[int]:
         db.close()
 
 
-def reschedule_overdue_jobs_on_startup(*, gap_seconds: int = 90) -> dict:
-    """Ao reabrir o app: jobs atrasados (PC off) são redistribuídos a partir de agora.
-
-    Mantém automações active e a fila pending — só evita rajada de posts de uma vez.
-    """
+def reschedule_overdue_jobs_on_startup() -> dict:
+    """Ao reabrir o app: se houver posts atrasados, redistribui com o intervalo da automação."""
     now = _now()
-    gap = max(30, int(gap_seconds))
     with svc.session_scope() as db:
         overdue = (
             db.query(AutomationJob)
@@ -565,10 +602,23 @@ def reschedule_overdue_jobs_on_startup(*, gap_seconds: int = 90) -> dict:
                 "automations_active": active,
             }
 
-        cursor = now
-        for job in overdue:
-            job.scheduled_at = cursor
-            cursor = cursor + timedelta(seconds=gap)
+        # Por automação: redistribui toda a fila pending com interval_minutes
+        auto_ids = {job.automation_id for job in overdue}
+        total_moved = 0
+        for aid in auto_ids:
+            a = db.get(Automation, aid)
+            if not a:
+                continue
+            pending = (
+                db.query(AutomationJob)
+                .filter(
+                    AutomationJob.automation_id == aid,
+                    AutomationJob.status == "pending",
+                )
+                .all()
+            )
+            _redistribute_jobs(a, pending, start=now)
+            total_moved += len(pending)
 
         active = db.query(Automation).filter(Automation.status == "active").count()
         pending_future = (
@@ -581,12 +631,12 @@ def reschedule_overdue_jobs_on_startup(*, gap_seconds: int = 90) -> dict:
             .count()
         )
         notify.log_event(
-            f"Retomada: {len(overdue)} post(s) atrasado(s) redistribuído(s) "
-            f"(~{gap}s entre cada) · {active} automação(ões) ativa(s)",
+            f"Retomada: {total_moved} post(s) redistribuído(s) com o intervalo das automações "
+            f"· {active} ativa(s)",
             "info",
         )
         return {
-            "overdue_rescheduled": len(overdue),
+            "overdue_rescheduled": total_moved,
             "pending_future": pending_future,
             "automations_active": active,
         }

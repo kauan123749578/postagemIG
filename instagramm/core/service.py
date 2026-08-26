@@ -80,7 +80,7 @@ def resume_after_restart() -> dict:
     """Chamado ao abrir o app: filas no SQLite continuam; redistribui atrasados."""
     from core import automations as auto_svc
 
-    auto = auto_svc.reschedule_overdue_jobs_on_startup(gap_seconds=90)
+    auto = auto_svc.reschedule_overdue_jobs_on_startup()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     with session_scope() as db:
         sched_due = (
