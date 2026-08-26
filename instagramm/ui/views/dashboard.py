@@ -11,6 +11,23 @@ from ui.charts import BarChart
 from ui.views.base import BaseView
 
 
+def _clock_local(iso: str) -> str:
+    """Horário local simples: 22h30 (outro dia: 26/08 22h30)."""
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+        clock = f"{dt.hour}h{dt.minute:02d}"
+        today = datetime.now().astimezone().date() if dt.tzinfo else datetime.now().date()
+        if dt.date() == today:
+            return clock
+        return f"{dt.strftime('%d/%m')} {clock}"
+    except ValueError:
+        return iso[:19] if iso else "—"
+
+
 class DashboardView(BaseView):
     def __init__(self, master, app):
         super().__init__(master, app)
@@ -336,16 +353,10 @@ class DashboardView(BaseView):
             ).pack(fill="x", padx=10, pady=(0, 2))
             next_at = item.get("next_at") or ""
             if next_at:
-                try:
-                    dt = datetime.fromisoformat(next_at.replace("Z", "+00:00"))
-                    if dt.tzinfo is not None:
-                        dt = dt.astimezone()
-                    next_txt = dt.strftime("%d/%m/%Y %H:%M:%S")
-                except ValueError:
-                    next_txt = next_at[:19]
+                next_txt = _clock_local(next_at)
                 ctk.CTkLabel(
                     row,
-                    text=f"Próximo: {next_txt}",
+                    text=f"Próximo Reels {next_txt}",
                     font=(theme.FONT, 11, "bold"),
                     text_color=theme.PRIMARY,
                     anchor="w",
@@ -393,13 +404,7 @@ class DashboardView(BaseView):
             )
             row.pack(fill="x", pady=3)
             when = item.get("scheduled_at") or ""
-            try:
-                dt = datetime.fromisoformat(when.replace("Z", "+00:00"))
-                if dt.tzinfo is not None:
-                    dt = dt.astimezone()  # horário local do PC
-                when_txt = dt.strftime("%d/%m/%Y %H:%M:%S")
-            except ValueError:
-                when_txt = when[:19] if when else "—"
+            when_txt = _clock_local(when)
             head = ctk.CTkFrame(row, fg_color="transparent")
             head.pack(fill="x", padx=10, pady=(8, 0))
             ctk.CTkLabel(
@@ -422,7 +427,7 @@ class DashboardView(BaseView):
                 ).pack(side="right")
             ctk.CTkLabel(
                 row,
-                text=when_txt,
+                text=f"Próximo Reels {when_txt}" if is_next else when_txt,
                 font=(theme.FONT, 13, "bold"),
                 text_color=theme.PRIMARY if is_next else theme.TEXT,
                 anchor="w",

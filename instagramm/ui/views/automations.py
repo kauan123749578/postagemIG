@@ -24,14 +24,18 @@ INTERVAL_OPTIONS = [
 
 
 def _format_local_exact(iso: str) -> str:
-    """Converte ISO (UTC) para horário local com segundos."""
+    """Horário local simples: 22h30 (se for outro dia: 26/08 22h30)."""
     if not iso:
         return "—"
     try:
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         if dt.tzinfo is not None:
             dt = dt.astimezone()
-        return dt.strftime("%d/%m/%Y %H:%M:%S")
+        clock = f"{dt.hour}h{dt.minute:02d}"
+        today = datetime.now().astimezone().date() if dt.tzinfo else datetime.now().date()
+        if dt.date() == today:
+            return clock
+        return f"{dt.strftime('%d/%m')} {clock}"
     except ValueError:
         return iso[:19] if iso else "—"
 
@@ -148,7 +152,7 @@ class AutomationsView(BaseView):
             if item.get("next_at"):
                 ctk.CTkLabel(
                     row,
-                    text=f"Próximo post: {next_txt}",
+                    text=f"Próximo Reels {next_txt}",
                     font=(theme.FONT, 12, "bold"),
                     text_color=theme.PRIMARY,
                     anchor="w",
